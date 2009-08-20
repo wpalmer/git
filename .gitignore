@@ -105,6 +105,7 @@
 /git-rebase--interactive
 /git-receive-pack
 /git-reflog
+/git-reflog-tree
 /git-relink
 /git-remote
 /git-remote-curl
