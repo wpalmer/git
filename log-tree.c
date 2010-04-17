@@ -282,6 +282,7 @@ void show_log(struct rev_info *opt)
 	int abbrev_commit = opt->abbrev_commit ? opt->abbrev : 40;
 	const char *extra_headers = opt->extra_headers;
 	struct pretty_print_context ctx = {0};
+	ctx.use_color = DIFF_OPT_TST(&opt->diffopt, COLOR_DIFF);
 
 	opt->loginfo = NULL;
 	ctx.show_notes = opt->show_notes;
