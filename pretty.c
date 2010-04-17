@@ -634,35 +634,50 @@ static size_t format_commit_one(struct strbuf *sb, const char *placeholder,
 	struct format_commit_context *c = context;
 	const struct commit *commit = c->commit;
 	const char *msg = commit->buffer;
+	const char *color_start;
 	struct commit_list *p;
+	int use_color = c->pretty_ctx->use_color;
+	int conditional_color = 0;
 	int h1, h2;
 
 	/* these are independent of the commit */
 	switch (placeholder[0]) {
 	case 'C':
-		if (placeholder[1] == '(') {
+		color_start = placeholder;
+		if (placeholder[1] == '?') {
+			color_start++;
+			conditional_color = 1;
+		}
+		if (color_start[1] == '(') {
 			const char *end = strchr(placeholder + 2, ')');
 			char color[COLOR_MAXLEN];
 			if (!end)
 				return 0;
-			color_parse_mem(placeholder + 2,
-					end - (placeholder + 2),
-					"--pretty format", color);
-			strbuf_addstr(sb, color);
+			if ( !conditional_color || use_color ) {
+				color_parse_mem(color_start + 2,
+						end - (color_start + 2),
+						"--pretty format", color);
+				strbuf_addstr(sb, color);
+			}
 			return end - placeholder + 1;
 		}
-		if (!prefixcmp(placeholder + 1, "red")) {
-			strbuf_addstr(sb, GIT_COLOR_RED);
-			return 4;
-		} else if (!prefixcmp(placeholder + 1, "green")) {
-			strbuf_addstr(sb, GIT_COLOR_GREEN);
-			return 6;
-		} else if (!prefixcmp(placeholder + 1, "blue")) {
-			strbuf_addstr(sb, GIT_COLOR_BLUE);
-			return 5;
-		} else if (!prefixcmp(placeholder + 1, "reset")) {
-			strbuf_addstr(sb, GIT_COLOR_RESET);
-			return 6;
+
+		if (!prefixcmp(color_start + 1, "red")) {
+			if ( !conditional_color || use_color )
+				strbuf_addstr(sb, GIT_COLOR_RED);
+			return 4 + (conditional_color ? 1 : 0);
+		} else if (!prefixcmp(color_start + 1, "green")) {
+			if ( !conditional_color || use_color )
+				strbuf_addstr(sb, GIT_COLOR_GREEN);
+			return 6 + (conditional_color ? 1 : 0);
+		} else if (!prefixcmp(color_start + 1, "blue")) {
+			if ( !conditional_color || use_color )
+				strbuf_addstr(sb, GIT_COLOR_BLUE);
+			return 5 + (conditional_color ? 1 : 0);
+		} else if (!prefixcmp(color_start + 1, "reset")) {
+			if ( !conditional_color || use_color )
+				strbuf_addstr(sb, GIT_COLOR_RESET);
+			return 6 + (conditional_color ? 1 : 0);
 		} else
 			return 0;
 	case 'n':		/* newline */
