@@ -274,7 +274,7 @@ void log_write_email_headers(struct rev_info *opt, struct commit *commit,
 	*extra_headers_p = extra_headers;
 }
 
-void show_log(struct rev_info *opt)
+void show_log(struct rev_info *opt, int use_color)
 {
 	struct strbuf msgbuf = STRBUF_INIT;
 	struct log_info *log = opt->loginfo;
@@ -282,6 +282,7 @@ void show_log(struct rev_info *opt)
 	int abbrev_commit = opt->abbrev_commit ? opt->abbrev : 40;
 	const char *extra_headers = opt->extra_headers;
 	struct pretty_print_context ctx = {0};
+	ctx.use_color = use_color;
 
 	opt->loginfo = NULL;
 	ctx.show_notes = opt->show_notes;
@@ -457,12 +458,13 @@ int log_tree_diff_flush(struct rev_info *opt)
 	}
 
 	if (opt->loginfo && !opt->no_commit_id) {
+		int use_color = DIFF_OPT_TST(&opt->diffopt, COLOR_DIFF);
 		/* When showing a verbose header (i.e. log message),
 		 * and not in --pretty=oneline format, we would want
 		 * an extra newline between the end of log and the
 		 * output for readability.
 		 */
-		show_log(opt);
+		show_log(opt, use_color);
 		if ((opt->diffopt.output_format & ~DIFF_FORMAT_NO_OUTPUT) &&
 		    opt->verbose_header &&
 		    opt->commit_format != CMIT_FMT_ONELINE) {
@@ -559,8 +561,9 @@ int log_tree_commit(struct rev_info *opt, struct commit *commit)
 
 	shown = log_tree_diff(opt, commit, &log);
 	if (!shown && opt->loginfo && opt->always_show_header) {
+		int use_color = DIFF_OPT_TST(&opt->diffopt, COLOR_DIFF);
 		log.parent = NULL;
-		show_log(opt);
+		show_log(opt, use_color);
 		shown = 1;
 	}
 	opt->loginfo = NULL;

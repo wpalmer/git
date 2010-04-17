@@ -294,6 +294,7 @@ static void show_one_commit(struct commit *commit, int no_name)
 
 	if (commit->object.parsed) {
 		struct pretty_print_context ctx = {0};
+		ctx.use_color = showbranch_use_color;
 		pretty_print_commit(CMIT_FMT_ONELINE, commit, &pretty, &ctx);
 		pretty_str = pretty.buf;
 	}
