@@ -11,6 +11,16 @@
 #include "reflog-walk.h"
 
 static char *user_format;
+static struct cmt_fmt_map {
+	const char *name;
+	enum cmit_fmt format;
+	const char *user_format;
+	int is_tformat;
+	int is_alias;
+} *commit_formats = NULL;
+static size_t commit_formats_len = 0;
+static size_t commit_formats_alloc = 0;
+static struct cmt_fmt_map *find_commit_format(const char *sought);
 
 static void save_user_format(struct rev_info *rev, const char *cp, int is_tformat)
 {
@@ -21,22 +31,134 @@ static void save_user_format(struct rev_info *rev, const char *cp, int is_tforma
 	rev->commit_format = CMIT_FMT_USERFORMAT;
 }
 
-void get_commit_format(const char *arg, struct rev_info *rev)
+static int git_pretty_formats_config(const char *var, const char *value, void *cb)
+{
+	if (!prefixcmp(var, "format.pretty.")) {
+		struct cmt_fmt_map user_format = {0};
+		const char *fmt;
+
+		user_format.name = xstrdup(&var[14]);
+		user_format.format = CMIT_FMT_USERFORMAT;
+		git_config_string(&fmt, var, value);
+		if (!prefixcmp(fmt, "format:") || !prefixcmp(fmt, "tformat:")) {
+			user_format.is_tformat = fmt[0] == 't';
+			fmt = strchr(fmt, ':') + 1;
+		} else if (strchr(fmt, '%'))
+			user_format.is_tformat = 1;
+		else
+			user_format.is_alias = 1;
+		user_format.user_format = fmt;
+
+		ALLOC_GROW(commit_formats, commit_formats_len+1,
+			   commit_formats_alloc);
+		memcpy(&commit_formats[ commit_formats_len ], &user_format,
+		       sizeof(user_format));
+		commit_formats_len++;
+	}
+	return 0;
+}
+
+static void setup_commit_formats(void)
 {
 	int i;
-	static struct cmt_fmt_map {
-		const char *n;
-		size_t cmp_len;
-		enum cmit_fmt v;
-	} cmt_fmts[] = {
-		{ "raw",	1,	CMIT_FMT_RAW },
-		{ "medium",	1,	CMIT_FMT_MEDIUM },
-		{ "short",	1,	CMIT_FMT_SHORT },
-		{ "email",	1,	CMIT_FMT_EMAIL },
-		{ "full",	5,	CMIT_FMT_FULL },
-		{ "fuller",	5,	CMIT_FMT_FULLER },
-		{ "oneline",	1,	CMIT_FMT_ONELINE },
+	const char **attempted_aliases = NULL;
+	size_t attempted_aliases_alloc = 0;
+	size_t attempted_aliases_len;
+	struct cmt_fmt_map builtin_formats[] = {
+		{ "raw",	CMIT_FMT_RAW,		NULL,	0 },
+		{ "medium",	CMIT_FMT_MEDIUM,	NULL,	0 },
+		{ "short",	CMIT_FMT_SHORT,		NULL,	0 },
+		{ "email",	CMIT_FMT_EMAIL,		NULL,	0 },
+		{ "full",	CMIT_FMT_FULL,		NULL,	0 },
+		{ "fuller",	CMIT_FMT_FULLER,	NULL,	0 },
+		{ "oneline",	CMIT_FMT_ONELINE,	NULL,	1 }
 	};
+	commit_formats_len = ARRAY_SIZE(builtin_formats);
+	ALLOC_GROW(commit_formats, commit_formats_len, commit_formats_alloc);
+	memcpy(commit_formats, builtin_formats,
+	       sizeof(*builtin_formats)*ARRAY_SIZE(builtin_formats));
+
+	git_config(git_pretty_formats_config, NULL);
+
+	for (i = ARRAY_SIZE(builtin_formats); i < commit_formats_len; i++) {
+		attempted_aliases_len = 0;
+		struct cmt_fmt_map *aliased_format = &commit_formats[i];
+		const char *fmt = commit_formats[i].user_format;
+		int j;
+
+		if (!commit_formats[i].is_alias)
+			continue;
+
+		while ((aliased_format = find_commit_format(fmt))) {
+			if (!aliased_format->is_alias)
+				break;
+
+			fmt = aliased_format->user_format;
+			for (j=0; j<attempted_aliases_len; j++) {
+				if (!strcmp(fmt, attempted_aliases[j])) {
+					aliased_format = NULL;
+					break;
+				}
+			}
+			if (!aliased_format)
+				break;
+
+			ALLOC_GROW(attempted_aliases, attempted_aliases_len+1,
+				   attempted_aliases_alloc);
+			attempted_aliases[attempted_aliases_len] = fmt;
+			attempted_aliases_len++;
+		}
+		if (aliased_format) {
+			commit_formats[i].format = aliased_format->format;
+			commit_formats[i].user_format = aliased_format->user_format;
+			commit_formats[i].is_tformat = aliased_format->is_tformat;
+			commit_formats[i].is_alias = 0;
+		} else
+			commit_formats[i].format = CMIT_FMT_UNSPECIFIED;
+	}
+}
+
+static struct cmt_fmt_map *find_commit_format(const char *sought)
+{
+	struct cmt_fmt_map *found = NULL;
+	size_t found_match_len = 0;
+
+	if (!commit_formats)
+		setup_commit_formats();
+
+	int i;
+	for (i = 0; i < commit_formats_len; i++) {
+		const char *candidate = commit_formats[i].name;
+		const char *s = sought;
+		size_t match_len = 0;
+
+		if (commit_formats[i].format == CMIT_FMT_UNSPECIFIED)
+			continue;
+
+		for (; s++, candidate++;) {
+			if (!*candidate && *s) {
+				match_len = 0;
+				break;
+			}
+			if (!*candidate || !*s) {
+				match_len = s - sought;
+				break;
+			}
+			if (*s != *candidate) {
+				match_len = 0;
+				break;
+			}
+		}
+		if (match_len > found_match_len) {
+			found = &commit_formats[i];
+		}
+	}
+	return found;
+}
+
+void get_commit_format(const char *arg, struct rev_info *rev)
+{
+	struct cmt_fmt_map *commit_format;
 
 	rev->use_terminator = 0;
 	if (!arg || !*arg) {
@@ -47,21 +169,22 @@ void get_commit_format(const char *arg, struct rev_info *rev)
 		save_user_format(rev, strchr(arg, ':') + 1, arg[0] == 't');
 		return;
 	}
-	for (i = 0; i < ARRAY_SIZE(cmt_fmts); i++) {
-		if (!strncmp(arg, cmt_fmts[i].n, cmt_fmts[i].cmp_len) &&
-		    !strncmp(arg, cmt_fmts[i].n, strlen(arg))) {
-			if (cmt_fmts[i].v == CMIT_FMT_ONELINE)
-				rev->use_terminator = 1;
-			rev->commit_format = cmt_fmts[i].v;
-			return;
-		}
-	}
+
 	if (strchr(arg, '%')) {
 		save_user_format(rev, arg, 1);
 		return;
 	}
 
-	die("invalid --pretty format: %s", arg);
+	commit_format = find_commit_format(arg);
+	if( !commit_format )
+		die("invalid --pretty format: %s", arg);
+
+	rev->commit_format = commit_format->format;
+	rev->use_terminator = commit_format->is_tformat;
+	if( commit_format->format == CMIT_FMT_USERFORMAT ){
+		save_user_format(rev, commit_format->user_format,
+				 commit_format->is_tformat);
+	}
 }
 
 /*
