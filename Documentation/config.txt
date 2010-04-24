@@ -894,6 +894,14 @@ format.pretty::
 	See linkgit:git-log[1], linkgit:git-show[1],
 	linkgit:git-whatchanged[1].
 
+format.pretty.<name>::
+	Alias for a --pretty= format string, as specified in
+	linkgit:git-log[1]. Any aliases defined here can be used just
+	as the builtin pretty formats could. For example, defining
+	"format.pretty.hash = format:%H" would cause the invocation
+	"git log --pretty=hash" to be equivalent to running
+	"git log --pretty=format:%H".
+
 format.thread::
 	The default threading style for 'git format-patch'.  Can be
 	a boolean value, or `shallow` or `deep`.  `shallow` threading
