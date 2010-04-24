@@ -66,4 +66,51 @@ test_expect_success "log --pretty=raw should NOT respect --abbrev-commit" \
 	git log -1 --pretty=raw --abbrev-commit > actual &&
 	test_cmp expected actual'
 
+test_expect_success "alias builtin format" \
+	"git log --pretty=oneline >expected &&
+	git config pretty.test-alias oneline &&
+	git log --pretty=test-alias >actual &&
+	test_cmp expected actual"
+
+test_expect_success "alias masking builtin format" \
+	"git log --pretty=oneline >expected &&
+	git config pretty.oneline '%H' &&
+	git log --pretty=oneline >actual &&
+	test_cmp expected actual"
+
+test_expect_success "alias user-defined format" \
+	"git log --pretty='format:%h' >expected &&
+	git config pretty.test-alias 'format:%h' &&
+	git log --pretty=test-alias >actual &&
+	test_cmp expected actual"
+
+test_expect_success "alias user-defined tformat" \
+	"git log --pretty='tformat:%h' >expected &&
+	git config pretty.test-alias 'tformat:%h' &&
+	git log --pretty=test-alias >actual &&
+	test_cmp expected actual"
+
+test_expect_code 128 "alias non-existant format" \
+	"git config pretty.test-alias format-that-will-never-exist &&
+	git log --pretty=test-alias"
+
+test_expect_success "alias of an alias" \
+	"git log --pretty='tformat:%h' >expected &&
+	git config pretty.test-foo 'tformat:%h' &&
+	git config pretty.test-bar test-foo &&
+	git log --pretty=test-bar >actual &&
+	test_cmp expected actual"
+
+test_expect_success "alias masking an alias" \
+	"git log --pretty=format:'Two %H' >expected &&
+	git config pretty.duplicate 'format:One %H' &&
+	git config --add pretty.duplicate 'format:Two %H' &&
+	git log --pretty=duplicate >actual &&
+	test_cmp expected actual"
+
+test_expect_code 128 "alias loop" \
+	"git config pretty.test-foo test-bar &&
+	git config pretty.test-bar test-foo &&
+	git log --pretty=test-foo"
+
 test_done
