@@ -282,6 +282,8 @@ void show_log(struct rev_info *opt, int use_color)
 	int abbrev_commit = opt->abbrev_commit ? opt->abbrev : 40;
 	const char *extra_headers = opt->extra_headers;
 	struct pretty_print_context ctx = {0};
+	ctx.abbrev = opt->abbrev;
+	ctx.abbrev_commit = opt->abbrev_commit;
 	ctx.use_color = use_color;
 
 	opt->loginfo = NULL;
