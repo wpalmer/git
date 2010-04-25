@@ -65,7 +65,8 @@ enum cmit_fmt {
 
 struct pretty_print_context
 {
-	int abbrev;
+	int abbrev; /* length of abbreviated hashes */
+	int abbrev_commit; /* whether or not to abbreviate commit hashes */
 	const char *subject;
 	const char *after_subject;
 	enum date_mode date_mode;

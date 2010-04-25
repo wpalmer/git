@@ -98,6 +98,7 @@ static void show_commit(struct commit *commit, void *data)
 		struct strbuf buf = STRBUF_INIT;
 		struct pretty_print_context ctx = {0};
 		ctx.abbrev = revs->abbrev;
+		ctx.abbrev_commit = revs->abbrev_commit;
 		ctx.date_mode = revs->date_mode;
 		ctx.use_color = DIFF_OPT_TST(&revs->diffopt, COLOR_DIFF);
 		pretty_print_commit(revs->commit_format, commit, &buf, &ctx);

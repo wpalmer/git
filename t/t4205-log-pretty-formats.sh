@@ -48,5 +48,22 @@ for color in red green blue reset; do
 
 done
 done
+test_expect_success "reset color flags" "git config --unset color.ui"
+
+test_expect_success "%H with --abbrev-commit should be synonym for %h" \
+	"git log -1 --pretty='format:%H' --abbrev-commit > expected &&
+	git log -1 --pretty='format:%h' > actual &&
+	test_cmp expected actual"
+
+test_expect_success "%H with --abbrev-commit should respect --abbrev" \
+	'test 20 = $(git log -1 --pretty="format:%H" --abbrev-commit --abbrev=20 | wc -c)'
+
+test_expect_success "%h should respect --abbrev" \
+	'test 20 = $(git log -1 --pretty="format:%h" --abbrev-commit --abbrev=20 | wc -c)'
+
+test_expect_success "log --pretty=raw should NOT respect --abbrev-commit" \
+	'git log -1 --pretty=raw > expected &&
+	git log -1 --pretty=raw --abbrev-commit > actual &&
+	test_cmp expected actual'
 
 test_done

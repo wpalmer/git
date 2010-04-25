@@ -725,13 +725,16 @@ static size_t format_commit_one(struct strbuf *sb, const char *placeholder,
 
 	switch (placeholder[0]) {
 	case 'H':		/* commit hash */
-		strbuf_addstr(sb, sha1_to_hex(commit->object.sha1));
-		return 1;
 	case 'h':		/* abbreviated commit hash */
+		if (placeholder[0] != 'h' && !c->pretty_ctx->abbrev_commit) {
+			strbuf_addstr(sb, sha1_to_hex(commit->object.sha1));
+			return 1;
+		}
+
 		if (add_again(sb, &c->abbrev_commit_hash))
 			return 1;
 		strbuf_addstr(sb, find_unique_abbrev(commit->object.sha1,
-		                                     DEFAULT_ABBREV));
+						     c->pretty_ctx->abbrev));
 		c->abbrev_commit_hash.len = sb->len - c->abbrev_commit_hash.off;
 		return 1;
 	case 'T':		/* tree hash */
@@ -741,24 +744,29 @@ static size_t format_commit_one(struct strbuf *sb, const char *placeholder,
 		if (add_again(sb, &c->abbrev_tree_hash))
 			return 1;
 		strbuf_addstr(sb, find_unique_abbrev(commit->tree->object.sha1,
-		                                     DEFAULT_ABBREV));
+						     c->pretty_ctx->abbrev));
 		c->abbrev_tree_hash.len = sb->len - c->abbrev_tree_hash.off;
 		return 1;
 	case 'P':		/* parent hashes */
-		for (p = commit->parents; p; p = p->next) {
-			if (p != commit->parents)
-				strbuf_addch(sb, ' ');
-			strbuf_addstr(sb, sha1_to_hex(p->item->object.sha1));
-		}
-		return 1;
 	case 'p':		/* abbreviated parent hashes */
+		if (placeholder[0] != 'p' && !c->pretty_ctx->abbrev_commit) {
+			for (p = commit->parents; p; p = p->next) {
+				if (p != commit->parents)
+					strbuf_addch(sb, ' ');
+				strbuf_addstr(sb,
+					      sha1_to_hex(p->item->object.sha1));
+			}
+			return 1;
+		}
+
 		if (add_again(sb, &c->abbrev_parent_hashes))
 			return 1;
 		for (p = commit->parents; p; p = p->next) {
 			if (p != commit->parents)
 				strbuf_addch(sb, ' ');
 			strbuf_addstr(sb, find_unique_abbrev(
-					p->item->object.sha1, DEFAULT_ABBREV));
+					p->item->object.sha1,
+					c->pretty_ctx->abbrev));
 		}
 		c->abbrev_parent_hashes.len = sb->len -
 		                              c->abbrev_parent_hashes.off;

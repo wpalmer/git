@@ -279,10 +279,13 @@ void show_log(struct rev_info *opt)
 	struct strbuf msgbuf = STRBUF_INIT;
 	struct log_info *log = opt->loginfo;
 	struct commit *commit = log->commit, *parent = log->parent;
-	int abbrev_commit = opt->abbrev_commit ? opt->abbrev : 40;
+	int abbrev_commit;
 	const char *extra_headers = opt->extra_headers;
 	struct pretty_print_context ctx = {0};
+	ctx.abbrev = opt->diffopt.abbrev;
+	ctx.abbrev_commit = opt->abbrev_commit && opt->commit_format != CMIT_FMT_RAW;
 	ctx.use_color = DIFF_OPT_TST(&opt->diffopt, COLOR_DIFF);
+	abbrev_commit = ctx.abbrev_commit ? ctx.abbrev : 40;
 
 	opt->loginfo = NULL;
 	ctx.show_notes = opt->show_notes;
@@ -411,7 +414,6 @@ void show_log(struct rev_info *opt)
 	if (ctx.need_8bit_cte >= 0)
 		ctx.need_8bit_cte = has_non_ascii(opt->add_signoff);
 	ctx.date_mode = opt->date_mode;
-	ctx.abbrev = opt->diffopt.abbrev;
 	ctx.after_subject = extra_headers;
 	ctx.reflog_info = opt->reflog_info;
 	pretty_print_commit(opt->commit_format, commit, &msgbuf, &ctx);
