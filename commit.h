@@ -72,6 +72,7 @@ struct pretty_print_context
 	int need_8bit_cte;
 	int show_notes;
 	int use_color;
+	int abbrev_commit;
 	struct reflog_walk_info *reflog_info;
 };
 

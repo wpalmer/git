@@ -143,6 +143,8 @@ void shortlog_add_commit(struct shortlog *log, struct commit *commit, struct rev
 	struct strbuf ufbuf = STRBUF_INIT;
 	struct pretty_print_context ctx = {0};
 
+	ctx.abbrev = rev->abbrev;
+	ctx.abbrev_commit = rev->abbrev_commit;
 	ctx.use_color = DIFF_OPT_TST(&rev->diffopt, COLOR_DIFF);
 	pretty_print_commit(CMIT_FMT_RAW, commit, &buf, &ctx);
 	buffer = buf.buf;
