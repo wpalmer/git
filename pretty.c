@@ -15,6 +15,8 @@ static struct cmt_fmt_map {
 	const char *name;
 	enum cmit_fmt format;
 	int is_tformat;
+	int is_alias;
+	const char *user_format;
 } *commit_formats = NULL;
 static size_t commit_formats_len = 0;
 static struct cmt_fmt_map *find_commit_format(const char *sought);
@@ -46,14 +48,15 @@ static void setup_commit_formats(void)
 	       sizeof(*builtin_formats)*ARRAY_SIZE(builtin_formats));
 }
 
-static struct cmt_fmt_map *find_commit_format(const char *sought)
+static struct cmt_fmt_map *find_commit_format_recursive(const char *sought,
+							int num_redirections)
 {
 	struct cmt_fmt_map *found = NULL;
 	size_t found_match_len;
 	int i;
 
-	if (!commit_formats)
-		setup_commit_formats();
+	if (num_redirections >= commit_formats_len)
+		return NULL;
 
 	for (i = 0; i < commit_formats_len; i++) {
 		size_t match_len;
@@ -67,7 +70,21 @@ static struct cmt_fmt_map *find_commit_format(const char *sought)
 			found_match_len = match_len;
 		}
 	}
+
+	if (found && found->is_alias) {
+		found = find_commit_format_recursive(found->user_format,
+						     num_redirections+1);
+	}
+
 	return found;
+}
+
+static struct cmt_fmt_map *find_commit_format(const char *sought)
+{
+	if (!commit_formats)
+		setup_commit_formats();
+
+	return find_commit_format_recursive(sought, 0);
 }
 
 void get_commit_format(const char *arg, struct rev_info *rev)
