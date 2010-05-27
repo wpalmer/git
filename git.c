@@ -379,6 +379,7 @@ static void handle_internal_command(int argc, const char **argv)
 		{ "notes", cmd_notes, RUN_SETUP },
 		{ "pack-objects", cmd_pack_objects, RUN_SETUP },
 		{ "pack-redundant", cmd_pack_redundant, RUN_SETUP },
+		{ "parse-format", cmd_parse_format },
 		{ "patch-id", cmd_patch_id },
 		{ "peek-remote", cmd_ls_remote, RUN_SETUP_GENTLY },
 		{ "pickaxe", cmd_blame, RUN_SETUP },

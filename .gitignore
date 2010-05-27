@@ -92,6 +92,7 @@
 /git-pack-redundant
 /git-pack-objects
 /git-pack-refs
+/git-parse-format
 /git-parse-remote
 /git-patch-id
 /git-peek-remote
