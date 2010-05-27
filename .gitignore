@@ -173,6 +173,7 @@
 /test-obj-pool
 /test-parse-options
 /test-path-utils
+/test-pretty
 /test-run-command
 /test-sha1
 /test-sigchain

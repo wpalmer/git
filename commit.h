@@ -83,17 +83,103 @@ struct userformat_want {
 	unsigned notes:1;
 };
 
+enum format_part_type {
+	FORMAT_PART_UNKNOWN = 0,
+	FORMAT_PART_LITERAL,
+
+	FORMAT_PART_COMMIT_HASH,
+	FORMAT_PART_COMMIT_HASH_ABBREV,
+	FORMAT_PART_PARENT_HASHES,
+	FORMAT_PART_PARENT_HASHES_ABBREV,
+	FORMAT_PART_TREE_HASH,
+	FORMAT_PART_TREE_HASH_ABBREV,
+
+	FORMAT_PART_AUTHOR_NAME,
+	FORMAT_PART_AUTHOR_NAME_MAILMAP,
+	FORMAT_PART_AUTHOR_EMAIL,
+	FORMAT_PART_AUTHOR_EMAIL_MAILMAP,
+	FORMAT_PART_AUTHOR_DATE,
+	FORMAT_PART_COMMITTER_NAME,
+	FORMAT_PART_COMMITTER_NAME_MAILMAP,
+	FORMAT_PART_COMMITTER_EMAIL,
+	FORMAT_PART_COMMITTER_EMAIL_MAILMAP,
+	FORMAT_PART_COMMITTER_DATE,
+
+	FORMAT_PART_DECORATE,
+	FORMAT_PART_ENCODING,
+	FORMAT_PART_SUBJECT,
+	FORMAT_PART_SUBJECT_SANITIZED,
+	FORMAT_PART_BODY,
+	FORMAT_PART_RAW_BODY,
+	FORMAT_PART_NOTES,
+
+	FORMAT_PART_REFLOG_SELECTOR,
+	FORMAT_PART_REFLOG_SELECTOR_SHORT,
+	FORMAT_PART_REFLOG_SUBJECT,
+
+	FORMAT_PART_MARK,
+	FORMAT_PART_WRAP
+};
+
+enum format_part_magic {
+	NO_MAGIC,
+	ADD_LF_BEFORE_NON_EMPTY,
+	DEL_LF_BEFORE_EMPTY,
+	ADD_SP_BEFORE_NON_EMPTY
+};
+
+enum format_arg_type {
+	FORMAT_ARG_UINT,
+	FORMAT_ARG_DATE_MODE
+};
+
+struct format_arg {
+	enum format_arg_type type;
+	union {
+		unsigned long uint;
+		enum date_mode dmode;
+	};
+};
+
+struct format_part;
+struct format_parts {
+	size_t			format_len;
+	struct userformat_want	want;
+	size_t			len;
+	size_t			alloc;
+	struct format_part	*part;
+};
+
+struct format_part {
+	enum format_part_type	type;
+	enum format_part_magic	magic;
+
+	size_t			format_len;
+
+	size_t			literal_len;
+	char			*literal;
+
+	size_t			argc;
+	size_t			args_alloc;
+	struct format_arg	*args;
+};
+
 extern int has_non_ascii(const char *text);
 struct rev_info; /* in revision.h, it circularly uses enum cmit_fmt */
 extern char *logmsg_reencode(const struct commit *commit,
 			     const char *output_encoding);
 extern char *reencode_commit_message(const struct commit *commit,
 				     const char **encoding_p);
+extern struct format_parts *parse_format(const char *unparsed);
 extern void get_commit_format(const char *arg, struct rev_info *);
 extern void userformat_find_requirements(const char *fmt, struct userformat_want *w);
 extern void format_commit_message(const struct commit *commit,
 				  const char *format, struct strbuf *sb,
 				  const struct pretty_print_context *context);
+extern void format_commit_message_parsed(const struct commit *commit,
+					 const struct format_parts *parsed_format,
+					 struct strbuf *sb,
+					 const struct pretty_print_context *context);
 extern void pretty_print_commit(enum cmit_fmt fmt, const struct commit *commit,
 				struct strbuf *sb,
 				const struct pretty_print_context *context);
