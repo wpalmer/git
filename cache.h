@@ -814,7 +814,8 @@ enum date_mode {
 	DATE_LOCAL,
 	DATE_ISO8601,
 	DATE_RFC2822,
-	DATE_RAW
+	DATE_RAW,
+	DATE_UNIX
 };
 
 const char *show_date(unsigned long time, int timezone, enum date_mode mode);

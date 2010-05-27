@@ -72,7 +72,7 @@ of lines before or after the line given by <start>.
 
 --date <format>::
 	The value is one of the following alternatives:
-	{relative,local,default,iso,rfc,short,raw}. If --date is
+	{relative,local,default,iso,rfc,short,unix,raw}. If --date is
 	not provided, the value of the blame.date config variable is
 	used. If the blame.date config variable is also not set, the
 	iso format is used. For more information, See the discussion
