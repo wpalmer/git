@@ -157,6 +157,11 @@ const char *show_date(unsigned long time, int tz, enum date_mode mode)
 		return timebuf;
 	}
 
+	if (mode == DATE_UNIX) {
+		snprintf(timebuf, sizeof(timebuf), "%lu", time);
+		return timebuf;
+	}
+
 	if (mode == DATE_RELATIVE) {
 		struct timeval now;
 		gettimeofday(&now, NULL);
@@ -672,6 +677,8 @@ enum date_mode parse_date_format(const char *format)
 		return DATE_NORMAL;
 	else if (!strcmp(format, "raw"))
 		return DATE_RAW;
+	else if (!strcmp(format, "unix"))
+		return DATE_UNIX;
 	else
 		die("unknown date format %s", format);
 }
