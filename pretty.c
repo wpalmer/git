@@ -23,6 +23,722 @@ static size_t commit_formats_len;
 static size_t commit_formats_alloc;
 static struct cmt_fmt_map *find_commit_format(const char *sought);
 
+enum format_part_type {
+	FORMAT_PART_UNKNOWN,
+	FORMAT_PART_FORMAT,
+	FORMAT_PART_LITERAL,
+
+	FORMAT_PART_COMMIT_HASH,
+	FORMAT_PART_COMMIT_HASH_ABBREV,
+	FORMAT_PART_PARENT_HASHES,
+	FORMAT_PART_PARENT_HASHES_ABBREV,
+	FORMAT_PART_TREE_HASH,
+	FORMAT_PART_TREE_HASH_ABBREV,
+
+	FORMAT_PART_AUTHOR_NAME,
+	FORMAT_PART_AUTHOR_NAME_MAILMAP,
+	FORMAT_PART_AUTHOR_EMAIL,
+	FORMAT_PART_AUTHOR_EMAIL_MAILMAP,
+	FORMAT_PART_AUTHOR_DATE,
+	FORMAT_PART_AUTHOR_DATE_RFC2822,
+	FORMAT_PART_AUTHOR_DATE_RELATIVE,
+	FORMAT_PART_AUTHOR_DATE_UNIX,
+	FORMAT_PART_AUTHOR_DATE_ISO8601,
+	FORMAT_PART_COMMITTER_NAME,
+	FORMAT_PART_COMMITTER_NAME_MAILMAP,
+	FORMAT_PART_COMMITTER_EMAIL,
+	FORMAT_PART_COMMITTER_EMAIL_MAILMAP,
+	FORMAT_PART_COMMITTER_DATE,
+	FORMAT_PART_COMMITTER_DATE_RFC2822,
+	FORMAT_PART_COMMITTER_DATE_RELATIVE,
+	FORMAT_PART_COMMITTER_DATE_UNIX,
+	FORMAT_PART_COMMITTER_DATE_ISO8601,
+
+	FORMAT_PART_DECORATE,
+	FORMAT_PART_ENCODING,
+	FORMAT_PART_SUBJECT,
+	FORMAT_PART_SUBJECT_SANITIZED,
+	FORMAT_PART_BODY,
+	FORMAT_PART_RAW_BODY,
+	FORMAT_PART_NOTES,
+
+	FORMAT_PART_REFLOG_SELECTOR,
+	FORMAT_PART_REFLOG_SELECTOR_SHORT,
+	FORMAT_PART_REFLOG_SUBJECT,
+
+	FORMAT_PART_COLOR,
+	FORMAT_PART_MARK,
+	FORMAT_PART_WRAP,
+
+	FORMAT_PART_CONDITION_OPT_COLOR,
+	FORMAT_PART_CONDITION_MERGE
+};
+
+enum format_part_magic {
+	NO_MAGIC,
+	ADD_LF_BEFORE_NON_EMPTY,
+	DEL_LF_BEFORE_EMPTY,
+	ADD_SP_BEFORE_NON_EMPTY
+};
+
+struct format_part;
+struct format_parts {
+	char	*format;
+	size_t	format_len;
+	size_t len;
+	size_t alloc;
+	struct format_part	*part;
+};
+
+struct format_part {
+	enum format_part_type	type;
+	enum format_part_magic	magic;
+
+	char			*format;
+	size_t			format_len;
+
+	size_t			literal_len;
+	char			*literal;
+
+	size_t			argc;
+	char			**argv;
+
+	struct format_parts	*parts;
+	struct format_parts	*alt_parts;
+};
+
+struct format_parse_state {
+	int	expect_quote;
+	int	expect_colon; // implies "error on question"
+	int	expect_paren; // if !expect_colon, error when colon found. implies error on question.
+	int	ignore_space;
+
+	char	found;
+};
+
+static struct format_parts *parse_format(const char *unparsed,
+				  struct format_parse_state *state);
+#define format_parts_alloc() \
+	((struct format_parts*)xcalloc(1, sizeof(struct format_parts)))
+#define format_part_alloc() \
+	((struct format_part*)xcalloc(1, sizeof(struct format_part)))
+static void format_part_free(struct format_part **part);
+static void format_parts_free(struct format_parts **parts)
+{
+	if((*parts)->part)
+		free((*parts)->part);
+	free(*parts);
+	*parts = NULL;
+}
+static void format_part_free(struct format_part **part)
+{
+	if ((*part)->format)
+		free((*part)->format);
+	if ((*part)->literal)
+		free((*part)->literal);
+	if ((*part)->argv)
+		free((*part)->argv);
+	if ((*part)->parts)
+		format_parts_free(&(*part)->parts);
+	if ((*part)->alt_parts)
+		format_parts_free(&(*part)->alt_parts);
+	free(*part);
+	*part = NULL;
+}
+
+static struct format_part * parts_add(struct format_parts *parts,
+				      enum format_part_type type)
+{
+	ALLOC_GROW(parts->part, parts->len+1, parts->alloc);
+	memset(&parts->part[parts->len], 0, sizeof(parts->part[parts->len]));
+	parts->part[parts->len].type = type;
+	parts->len++;
+	return &parts->part[parts->len-1];
+}
+
+static struct format_part * parts_add_part(struct format_parts *parts,
+					   struct format_part *part)
+{
+	struct format_part *dst = parts_add(parts, FORMAT_PART_UNKNOWN);
+	memcpy(dst, part, sizeof(*dst));
+	return dst;
+}
+
+static void parts_add_nliteral(struct format_parts *parts, const char *literal,
+			       size_t len)
+{
+	if( len == 0 ) return;
+	parts_add(parts, FORMAT_PART_LITERAL);
+	parts->part[parts->len-1].literal = xmemdupz(literal, len);
+	parts->part[parts->len-1].literal_len = len;
+	return;
+}
+
+static void parts_add_literal(struct format_parts *parts, const char *literal)
+{
+	parts_add(parts, FORMAT_PART_LITERAL);
+	parts->part[parts->len-1].literal = xstrdup(literal);
+	parts->part[parts->len-1].literal_len = strlen(literal);
+	return;
+}
+
+static void part_add_narg(struct format_part *part, const char *arg, size_t len)
+{
+	part->argv = xrealloc(part->argv, sizeof(char*) * part->argc+1);
+	part->argv[part->argc] = xstrndup(arg, len);
+	part->argc++;
+	return;
+}
+
+static struct strbuf * parts_debug(struct format_parts *parts, size_t indent);
+
+static struct format_part *parse_extended(const char *unparsed)
+{
+	struct format_part *part = format_part_alloc();
+	struct format_parse_state state = {0};
+	const char *c = unparsed + 2;
+	int condition = 0;
+	c += strspn(c, " \t\r\n");
+
+	if (*c == '"') {
+		part->type = FORMAT_PART_FORMAT;
+		state.expect_quote = 1;
+		c++;
+	} else if (!prefixcmp(c, "merge")) {
+		part->type = FORMAT_PART_CONDITION_MERGE;
+		condition = 1;
+		c += 5;
+	} else if (!prefixcmp(c, "opt-color")) {
+		part->type = FORMAT_PART_CONDITION_OPT_COLOR;
+		condition = 1;
+		c += 9;
+	} else {
+		part->type = FORMAT_PART_FORMAT;
+		state.expect_paren = 1;
+		state.ignore_space = 1;
+	}
+
+	if (condition) {
+		c += strspn(c, " \t\r\n");
+		if (*c != '?')
+			goto fail;
+
+		c++;
+		c += strspn(c, " \t\r\n");
+
+		if (*c == '"') {
+			state.expect_quote = 1;
+			c++;
+		}
+		state.expect_colon = !state.expect_quote;
+		state.expect_paren = !state.expect_quote;
+		state.ignore_space = !state.expect_quote;
+	}
+
+	part->parts = parse_format(c, &state);
+	if (!part->parts)
+		goto fail;
+
+	c += part->parts->format_len;
+	if( state.expect_quote )
+		c++;
+
+	if (condition) {
+		memset(&state, 0, sizeof(state));
+		c += strspn(c, " \t\r\n");
+
+		if (*c == ':'){
+			c++;
+			c += strspn(c, " \t\r\n");
+
+			if (*c == '"') {
+				state.expect_quote = 1;
+				c++;
+			}
+			state.expect_colon = !state.expect_quote;
+			state.expect_paren = !state.expect_quote;
+			state.ignore_space = !state.expect_quote;
+
+			part->alt_parts = parse_format(c, &state);
+			if (!part->alt_parts)
+				goto fail;
+
+			c += part->alt_parts->format_len;
+
+			if (*c == ':')
+				goto fail;
+
+			if (state.expect_quote) {
+				if (*c != '"')
+					goto fail;
+				c++;
+			}
+
+			c += strspn(c, " \t\r\n");
+		}
+	} else
+		c += strspn(c, " \t\r\n");
+
+	if (*c != ')')
+		goto fail;
+	c++;
+
+	part->format = xstrndup(unparsed, c - unparsed);
+	part->format_len = c - unparsed;
+	return part;
+
+fail:
+	format_part_free(&part);
+	return NULL;
+}
+
+static struct format_part *parse_special(const char *unparsed)
+{
+	struct format_part *part = format_part_alloc();
+	int h1,h2;
+	char c;
+	const char *s, *e;
+
+	switch (unparsed[1]) {
+		case '-':
+		case '+':
+		case ' ':
+			if (*unparsed != '%')
+				goto fail;
+
+			format_part_free(&part);
+			part = parse_special(unparsed + 1);
+			if (part) {
+				part->format_len++;
+				free(part->format);
+				part->format = xstrndup(unparsed, part->format_len);
+
+				switch (unparsed[1]) {
+					case '-':
+						part->magic = DEL_LF_BEFORE_EMPTY;
+						break;
+					case '+':
+						part->magic = ADD_LF_BEFORE_NON_EMPTY;
+						break;
+					case ' ':
+						part->magic = ADD_SP_BEFORE_NON_EMPTY;
+						break;
+				}
+			}
+			return part;
+		case 'h':
+			part->type = FORMAT_PART_COMMIT_HASH_ABBREV;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'H':
+			part->type = FORMAT_PART_COMMIT_HASH;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'p':
+			part->type = FORMAT_PART_PARENT_HASHES_ABBREV;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'P':
+			part->type = FORMAT_PART_PARENT_HASHES;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 't':
+			part->type = FORMAT_PART_TREE_HASH_ABBREV;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'T':
+			part->type = FORMAT_PART_TREE_HASH;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'a':
+			switch (unparsed[2]) {
+				case 'n':
+					part->type = FORMAT_PART_AUTHOR_NAME;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'N':
+					part->type = FORMAT_PART_AUTHOR_NAME_MAILMAP;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'e':
+					part->type = FORMAT_PART_AUTHOR_EMAIL;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'E':
+					part->type = FORMAT_PART_AUTHOR_EMAIL_MAILMAP;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'd':
+					part->type = FORMAT_PART_AUTHOR_DATE;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'D':
+					part->type = FORMAT_PART_AUTHOR_DATE_RFC2822;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'r':
+					part->type = FORMAT_PART_AUTHOR_DATE_RELATIVE;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 't':
+					part->type = FORMAT_PART_AUTHOR_DATE_UNIX;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'i':
+					part->type = FORMAT_PART_AUTHOR_DATE_ISO8601;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+
+			}
+			break;
+		case 'c':
+			switch (unparsed[2]) {
+				case 'n':
+					part->type = FORMAT_PART_COMMITTER_NAME;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'N':
+					part->type = FORMAT_PART_COMMITTER_NAME_MAILMAP;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'e':
+					part->type = FORMAT_PART_COMMITTER_EMAIL;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'E':
+					part->type = FORMAT_PART_COMMITTER_EMAIL_MAILMAP;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'd':
+					part->type = FORMAT_PART_COMMITTER_DATE;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'D':
+					part->type = FORMAT_PART_COMMITTER_DATE_RFC2822;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'r':
+					part->type = FORMAT_PART_COMMITTER_DATE_RELATIVE;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 't':
+					part->type = FORMAT_PART_COMMITTER_DATE_UNIX;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'i':
+					part->type = FORMAT_PART_COMMITTER_DATE_ISO8601;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+			}
+			break;
+		case 'd':
+			part->type = FORMAT_PART_DECORATE;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'e':
+			part->type = FORMAT_PART_ENCODING;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 's':
+			part->type = FORMAT_PART_SUBJECT;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'f':
+			part->type = FORMAT_PART_SUBJECT_SANITIZED;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'b':
+			part->type = FORMAT_PART_BODY;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'B':
+			part->type = FORMAT_PART_RAW_BODY;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'N':
+			part->type = FORMAT_PART_NOTES;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'g':
+			switch (unparsed[2]) {
+				case 'D':
+					part->type = FORMAT_PART_REFLOG_SELECTOR;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'd':
+					part->type = FORMAT_PART_REFLOG_SELECTOR_SHORT;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 's':
+					part->type = FORMAT_PART_REFLOG_SUBJECT;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+			}
+			break;
+		case 'C':
+			part->type = FORMAT_PART_LITERAL;
+			part->literal = xcalloc(1, COLOR_MAXLEN);
+			if (unparsed[2] == '(') {
+				s = &unparsed[3];
+				e = strchr(s, ')');
+				if (e) {
+					color_parse_mem(s, e - s,
+							"--pretty format", part->literal);
+					part->literal_len = strlen(part->literal);
+					part->format = strndup(unparsed, e - unparsed + 1);
+					part->format_len = strlen(part->format);
+					return part;
+				}
+				break;
+			}
+
+			if (!prefixcmp(&unparsed[2], "red")) {
+				part->literal = GIT_COLOR_RED;
+				part->literal_len = strlen(GIT_COLOR_RED);
+				part->format = xstrndup(unparsed, 5);
+				part->format_len = 5;
+			} else if (!prefixcmp(&unparsed[2], "green")) {
+				part->literal = GIT_COLOR_GREEN;
+				part->literal_len = strlen(GIT_COLOR_GREEN);
+				part->format = xstrndup(unparsed, 7);
+				part->format_len = 7;
+			} else if (!prefixcmp(&unparsed[2], "blue")) {
+				part->literal = GIT_COLOR_BLUE;
+				part->literal_len = strlen(GIT_COLOR_BLUE);
+				part->format = xstrndup(unparsed, 6);
+				part->format_len = 6;
+			} else if (!prefixcmp(&unparsed[2], "reset")) {
+				part->literal = GIT_COLOR_RESET;
+				part->literal_len = strlen(GIT_COLOR_RESET);
+				part->format = xstrndup(unparsed, 7);
+				part->format_len = 7;
+			}
+
+			if (part->literal)
+				return part;
+			break;
+		case 'm':
+			part->type = FORMAT_PART_MARK;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'w':
+			if (unparsed[2] != '(')
+				break;
+
+			part->type = FORMAT_PART_WRAP;
+
+			s = unparsed + 3;
+			s += strspn(s, " \t\r\n");
+			if (*s == ')') {
+				s++;
+				part->format = xstrndup(unparsed, s - unparsed);
+				part->format_len = strlen(part->format);
+				return part;
+			}
+
+			while (part->argc < 3) {
+				s += strspn(s, " \t\r\n");
+
+				if (strcspn(s, "0123456789"))
+					goto fail;
+
+				e = s + strspn(s, "0123456789");
+				if (e == s)
+					goto fail;
+
+				part_add_narg(part, s, e - s);
+
+				s = e + strspn(e, " \t\r\n");
+				if (*s == ')') {
+					s++;
+					part->format = xstrndup(unparsed, s - unparsed);
+					part->format_len = strlen(part->format);
+					return part;
+				}
+
+				if (*s == ',')
+					s++;
+			}
+			break;
+		case 'x':
+			/* %x00 == NUL, %x0a == LF, etc. */
+			if (0 <= (h1 = hexval_table[0xff & unparsed[2]]) &&
+			    h1 <= 16 &&
+			    0 <= (h2 = hexval_table[0xff & unparsed[3]]) &&
+			    h2 <= 16) {
+				part->type = FORMAT_PART_LITERAL;
+				part->format = xstrndup(unparsed, 4);
+				part->format_len = strlen(part->format);
+				c = (h1<<4)|h2;
+				part->literal = xmemdupz(&c, 1);
+				part->literal_len = 1;
+				return part;
+			}
+			break;
+		case 'n':
+			part->type = FORMAT_PART_LITERAL;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			part->literal = "\n";
+			part->literal_len = 1;
+			return part;
+		case '%':
+			part->type = FORMAT_PART_LITERAL;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			part->literal = "%";
+			part->literal_len = 1;
+			return part;
+		case '(':
+			return parse_extended(unparsed);
+	}
+
+fail:
+	format_part_free(&part);
+	return NULL;
+}
+
+static struct format_parts *parse_format(const char *unparsed,
+				  struct format_parse_state *state)
+{
+	struct format_parts *parts = format_parts_alloc();
+	struct format_part *part;
+	const char *c = unparsed;
+	const char *last = NULL;
+	char special[11];
+
+	sprintf(special, "%%%s%s%s%s",
+		state->expect_quote ? "\\\"" : "",
+		state->expect_colon || state->expect_paren ? ":?" : "",
+		state->expect_paren ? ")" : "",
+		state->ignore_space ? " \t\r\n" : "");
+
+	while (*c) {
+		if (!last)
+			last = c;
+
+		c += strcspn(c, special);
+		if (!*c)
+			break;
+
+		switch (*c) {
+			case '%':
+				part = parse_special(c);
+				if (part) {
+					parts_add_nliteral(parts, last, c - last);
+					last = NULL;
+
+					parts_add_part(parts, part);
+					c += part->format_len;
+					free(part);
+					continue;
+				}
+				break;
+			case ')':
+				if (state->expect_paren) {
+					state->found = ')';
+					goto success;
+				}
+				break;
+			case '?':
+				if (state->expect_colon || state->expect_paren) {
+					state->found = '?';
+					goto fail;
+				}
+				break;
+			case ':':
+				if (state->expect_colon || state->expect_paren) {
+					state->found = ':';
+					if (state->expect_colon)
+						goto success;
+					goto fail;
+				}
+				break;
+			case '\\':
+				if (state->expect_quote) {
+					parts_add_nliteral(parts, last, c - last);
+					last = NULL;
+					parts_add_literal(parts, "\"");
+					c += 1;
+				}
+				break;
+			case '"':
+				if (state->expect_quote) {
+					state->found = '"';
+					goto success;
+				}
+				break;
+			case ' ':
+			case '\t':
+			case '\r':
+			case '\n':
+				if (state->ignore_space) {
+					if (last)
+						parts_add_nliteral(parts, last, c - last);
+					last = NULL;
+					c += strspn(c, " \t\r\n");
+					continue;
+				}
+				break;
+		}
+		c++;
+	}
+
+success:
+	if (last)
+		parts_add_nliteral(parts, last, c - last);
+
+	parts->format = xstrndup(unparsed, c - unparsed);
+	parts->format_len = c - unparsed;
+	return parts;
+
+fail:
+	format_parts_free(&parts);
+	return NULL;
+}
+
+// should never return NULL;
+static struct format_parts *parse(const char *unparsed)
+{
+	struct format_parse_state state = {0};
+	return parse_format(unparsed, &state);
+}
+
 static void save_user_format(struct rev_info *rev, const char *cp, int is_tformat)
 {
 	free(user_format);
@@ -933,51 +1649,6 @@ static size_t format_commit_one(struct strbuf *sb, const char *placeholder,
 	return 0;	/* unknown placeholder */
 }
 
-static size_t format_commit_item(struct strbuf *sb, const char *placeholder,
-				 void *context)
-{
-	int consumed;
-	size_t orig_len;
-	enum {
-		NO_MAGIC,
-		ADD_LF_BEFORE_NON_EMPTY,
-		DEL_LF_BEFORE_EMPTY,
-		ADD_SP_BEFORE_NON_EMPTY
-	} magic = NO_MAGIC;
-
-	switch (placeholder[0]) {
-	case '-':
-		magic = DEL_LF_BEFORE_EMPTY;
-		break;
-	case '+':
-		magic = ADD_LF_BEFORE_NON_EMPTY;
-		break;
-	case ' ':
-		magic = ADD_SP_BEFORE_NON_EMPTY;
-		break;
-	default:
-		break;
-	}
-	if (magic != NO_MAGIC)
-		placeholder++;
-
-	orig_len = sb->len;
-	consumed = format_commit_one(sb, placeholder, context);
-	if (magic == NO_MAGIC)
-		return consumed;
-
-	if ((orig_len == sb->len) && magic == DEL_LF_BEFORE_EMPTY) {
-		while (sb->len && sb->buf[sb->len - 1] == '\n')
-			strbuf_setlen(sb, sb->len - 1);
-	} else if (orig_len != sb->len) {
-		if (magic == ADD_LF_BEFORE_NON_EMPTY)
-			strbuf_insert(sb, orig_len, "\n", 1);
-		else if (magic == ADD_SP_BEFORE_NON_EMPTY)
-			strbuf_insert(sb, orig_len, " ", 1);
-	}
-	return consumed + 1;
-}
-
 static size_t userformat_want_item(struct strbuf *sb, const char *placeholder,
 				   void *context)
 {
@@ -1007,17 +1678,335 @@ void userformat_find_requirements(const char *fmt, struct userformat_want *w)
 	strbuf_release(&dummy);
 }
 
+void format_commit_message_parts(struct format_parts *parsed, struct strbuf *sb,
+				 void *context);
+
+void format_commit_message_part(struct format_part *part, struct strbuf *sb,
+				void *context)
+{
+	struct format_commit_context *c = context;
+	const struct commit *commit = c->commit;
+	const char *msg = commit->buffer;
+	struct commit_list *p;
+	struct commit_person person = {0};
+	char mm_name[1024], mm_email[1024];
+	unsigned long width = 0, indent1 = 0, indent2 = 0;
+
+	/* these are independent of the commit */
+	switch (part->type) {
+	case FORMAT_PART_LITERAL:
+		strbuf_add(sb, part->literal, part->literal_len);
+		return;
+	case FORMAT_PART_WRAP:
+		if (part->argc > 0)
+			width = strtoul(part->argv[0], NULL, 10);
+		if (part->argc > 1)
+			indent1 = strtoul(part->argv[1], NULL, 10);
+		if (part->argc > 2)
+			indent2 = strtoul(part->argv[2], NULL, 10);
+		rewrap_message_tail(sb, c, width, indent1, indent2);
+		return;
+	case FORMAT_PART_CONDITION_OPT_COLOR:
+		if (c->pretty_ctx->use_color)
+			format_commit_message_parts(part->parts, sb, context);
+		else if(part->alt_parts)
+			format_commit_message_parts(part->alt_parts, sb, context);
+		return;
+	default:
+		break;
+	}
+
+	/* these depend on the commit */
+	if (!commit->object.parsed)
+		parse_object(commit->object.sha1);
+
+	switch (part->type) {
+	case FORMAT_PART_COMMIT_HASH:
+		strbuf_addstr(sb, sha1_to_hex(commit->object.sha1));
+		return;
+	case FORMAT_PART_COMMIT_HASH_ABBREV:
+		if (add_again(sb, &c->abbrev_commit_hash))
+			return;
+		strbuf_addstr(sb, find_unique_abbrev(commit->object.sha1,
+					     c->pretty_ctx->abbrev));
+		c->abbrev_commit_hash.len = sb->len - c->abbrev_commit_hash.off;
+		return;
+	case FORMAT_PART_TREE_HASH:
+		strbuf_addstr(sb, sha1_to_hex(commit->tree->object.sha1));
+		return;
+	case FORMAT_PART_TREE_HASH_ABBREV:
+		if (add_again(sb, &c->abbrev_tree_hash))
+			return;
+		strbuf_addstr(sb, find_unique_abbrev(commit->tree->object.sha1,
+						     c->pretty_ctx->abbrev));
+		c->abbrev_tree_hash.len = sb->len - c->abbrev_tree_hash.off;
+		return;
+	case FORMAT_PART_PARENT_HASHES:
+		for (p = commit->parents; p; p = p->next) {
+			if (p != commit->parents)
+				strbuf_addch(sb, ' ');
+			strbuf_addstr(sb, sha1_to_hex(p->item->object.sha1));
+		}
+		return;
+	case FORMAT_PART_PARENT_HASHES_ABBREV:
+		if (add_again(sb, &c->abbrev_parent_hashes))
+			return;
+		for (p = commit->parents; p; p = p->next) {
+			if (p != commit->parents)
+				strbuf_addch(sb, ' ');
+			strbuf_addstr(sb, find_unique_abbrev(
+					p->item->object.sha1,
+					c->pretty_ctx->abbrev));
+		}
+		c->abbrev_parent_hashes.len = sb->len -
+					      c->abbrev_parent_hashes.off;
+		return;
+	case FORMAT_PART_MARK:
+		strbuf_addch(sb, (commit->object.flags & BOUNDARY)
+				 ? '-'
+				 : (commit->object.flags & SYMMETRIC_LEFT)
+				 ? '<'
+				 : '>');
+		return;
+	case FORMAT_PART_DECORATE:
+		format_decoration(sb, commit);
+		return;
+	case FORMAT_PART_REFLOG_SELECTOR:
+	case FORMAT_PART_REFLOG_SELECTOR_SHORT:
+		if (c->pretty_ctx->reflog_info) {
+			get_reflog_selector(sb,
+					    c->pretty_ctx->reflog_info,
+					    c->pretty_ctx->date_mode,
+					    (part->type == FORMAT_PART_REFLOG_SELECTOR_SHORT));
+		}
+		return;
+	case FORMAT_PART_REFLOG_SUBJECT:
+		if (c->pretty_ctx->reflog_info)
+			get_reflog_message(sb, c->pretty_ctx->reflog_info);
+		return;
+	case FORMAT_PART_NOTES:
+		if (c->pretty_ctx->show_notes) {
+			format_display_notes(commit->object.sha1, sb,
+				    git_log_output_encoding ? git_log_output_encoding
+							    : git_commit_encoding, 0);
+		}
+		return;
+	case FORMAT_PART_CONDITION_MERGE:
+		if (commit->parents->next)
+			format_commit_message_parts(part->parts, sb, context);
+		else if(part->alt_parts)
+			format_commit_message_parts(part->alt_parts, sb, context);
+		return;
+	default:
+		break;
+	}
+
+	/* For the rest we have to parse the commit header. */
+	if (!c->commit_header_parsed)
+		parse_commit_header(c);
+
+	switch (part->type) {
+	case FORMAT_PART_AUTHOR_NAME:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (person.buffer)
+			strbuf_add(sb, person.name, person.name_len);
+		return;
+	case FORMAT_PART_AUTHOR_NAME_MAILMAP:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (!person.buffer)
+			return;
+
+		strlcpy(mm_name, person.name, person.name_len);
+		strlcpy(mm_email, person.email, person.email_len);
+		mailmap_name(mm_email, sizeof(mm_email),
+			     mm_name, sizeof(mm_name));
+		strbuf_addstr(sb, mm_name);
+		return;
+	case FORMAT_PART_AUTHOR_EMAIL:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (person.buffer)
+			strbuf_add(sb, person.email, person.email_len);
+		return;
+	case FORMAT_PART_AUTHOR_EMAIL_MAILMAP:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (!person.buffer)
+			return;
+
+		strlcpy(mm_name, person.name, person.name_len);
+		strlcpy(mm_email, person.email, person.email_len);
+		mailmap_name(mm_email, sizeof(mm_email),
+			     mm_name, sizeof(mm_name));
+		strbuf_addstr(sb, mm_email);
+		return;
+	case FORMAT_PART_AUTHOR_DATE:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (!person.buffer)
+			return;
+
+		strbuf_addstr(sb, show_date(person.date, person.tz,
+					    c->pretty_ctx->date_mode));
+		return;
+	case FORMAT_PART_AUTHOR_DATE_RFC2822:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (!person.buffer)
+			return;
+
+		strbuf_addstr(sb, show_date(person.date, person.tz, DATE_RFC2822));
+		return;
+	case FORMAT_PART_AUTHOR_DATE_RELATIVE:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (!person.buffer)
+			return;
+
+		strbuf_addstr(sb, show_date(person.date, person.tz, DATE_RELATIVE));
+		return;
+	case FORMAT_PART_AUTHOR_DATE_UNIX:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (!person.buffer)
+			return;
+
+		strbuf_addf(sb, "%lu", person.date);
+		return;
+	case FORMAT_PART_AUTHOR_DATE_ISO8601:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (!person.buffer)
+			return;
+
+		strbuf_addstr(sb, show_date(person.date, person.tz, DATE_ISO8601));
+		return;
+	case FORMAT_PART_COMMITTER_NAME:
+		parse_commit_person(&person,
+				    commit->buffer + c->committer.off,
+				    c->committer.len);
+		if (person.buffer)
+			strbuf_add(sb, person.name, person.name_len);
+		return;
+	case FORMAT_PART_COMMITTER_NAME_MAILMAP:
+		parse_commit_person(&person,
+				    commit->buffer + c->committer.off,
+				    c->committer.len);
+		if (!person.buffer)
+			return;
+
+		strlcpy(mm_name, person.name, person.name_len);
+		strlcpy(mm_email, person.email, person.email_len);
+		mailmap_name(mm_email, sizeof(mm_email),
+			     mm_name, sizeof(mm_name));
+		strbuf_addstr(sb, mm_name);
+		return;
+	case FORMAT_PART_COMMITTER_EMAIL:
+		parse_commit_person(&person,
+				    commit->buffer + c->committer.off,
+				    c->committer.len);
+		if (person.buffer)
+			strbuf_add(sb, person.email, person.email_len);
+		return;
+	case FORMAT_PART_COMMITTER_EMAIL_MAILMAP:
+		parse_commit_person(&person,
+				    commit->buffer + c->committer.off,
+				    c->committer.len);
+		if (!person.buffer)
+			return;
+
+		strlcpy(mm_name, person.name, person.name_len);
+		strlcpy(mm_email, person.email, person.email_len);
+		mailmap_name(mm_email, sizeof(mm_email),
+			     mm_name, sizeof(mm_name));
+		strbuf_addstr(sb, mm_email);
+		return;
+	case FORMAT_PART_ENCODING:
+		strbuf_add(sb, msg + c->encoding.off, c->encoding.len);
+		return;
+	case FORMAT_PART_RAW_BODY:
+		strbuf_addstr(sb, msg + c->message_off + 1);
+		return;
+	default:
+		break;
+	}
+
+	/* Now we need to parse the commit message. */
+	if (!c->commit_message_parsed)
+		parse_commit_message(c);
+
+	switch (part->type) {
+	case FORMAT_PART_SUBJECT:
+		format_subject(sb, msg + c->subject_off, " ");
+		return;
+	case FORMAT_PART_SUBJECT_SANITIZED:
+		format_sanitized_subject(sb, msg + c->subject_off);
+		return;
+	case FORMAT_PART_BODY:
+		strbuf_addstr(sb, msg + c->body_off);
+		return;
+	default:
+		strbuf_addstr(sb, "(UNKNOWN)");
+	}
+	return;
+}
+
+void format_commit_message_parts(struct format_parts *parsed, struct strbuf *sb,
+				 void *context)
+{
+	size_t i, orig_len;
+	enum format_part_magic magic;
+
+	for (i = 0; i < parsed->len; i++) {
+		orig_len = sb->len;
+		magic = parsed->part[i].magic;
+		format_commit_message_part(&parsed->part[i], sb, context);
+
+		if (magic == NO_MAGIC)
+			continue;
+
+		if ((orig_len == sb->len) && magic == DEL_LF_BEFORE_EMPTY) {
+			while (sb->len && sb->buf[sb->len - 1] == '\n')
+				strbuf_setlen(sb, sb->len - 1);
+		} else if (orig_len != sb->len) {
+			if (magic == ADD_LF_BEFORE_NON_EMPTY)
+				strbuf_insert(sb, orig_len, "\n", 1);
+			else if (magic == ADD_SP_BEFORE_NON_EMPTY)
+				strbuf_insert(sb, orig_len, " ", 1);
+		}
+	}
+}
+
 void format_commit_message(const struct commit *commit,
 			   const char *format, struct strbuf *sb,
 			   const struct pretty_print_context *pretty_ctx)
 {
 	struct format_commit_context context;
+	struct format_parts *parsed;
 
 	memset(&context, 0, sizeof(context));
 	context.commit = commit;
 	context.pretty_ctx = pretty_ctx;
 	context.wrap_start = sb->len;
-	strbuf_expand(sb, format, format_commit_item, &context);
+
+	parsed = parse(format);
+
+//parts_debug(parsed, 0);
+
+	format_commit_message_parts(parsed, sb, &context);
+
+//	strbuf_expand(sb, format, format_commit_item, &context);
 	rewrap_message_tail(sb, &context, 0, 0, 0);
 }
 
@@ -1173,6 +2162,17 @@ void pretty_print_commit(enum cmit_fmt fmt, const struct commit *commit,
 			 struct strbuf *sb,
 			 const struct pretty_print_context *context)
 {
+	if (fmt != CMIT_FMT_USERFORMAT)
+		die("this is a proof-of-concept, not everything works yet");
+
+	format_commit_message(commit, user_format, sb, context);
+	return;
+}
+
+void o_pretty_print_commit(enum cmit_fmt fmt, const struct commit *commit,
+			 struct strbuf *sb,
+			 const struct pretty_print_context *context)
+{
 	unsigned long beginning_of_body;
 	int indent = 4;
 	const char *msg = commit->buffer;
@@ -1252,4 +2252,145 @@ void pretty_print_commit(enum cmit_fmt fmt, const struct commit *commit,
 				     NOTES_SHOW_HEADER | NOTES_INDENT);
 
 	free(reencoded);
+}
+
+static struct strbuf * parts_debug(struct format_parts *parts, size_t indent)
+{
+	struct format_part *part;
+	struct strbuf *buf = xcalloc(1, sizeof(*buf));
+	struct strbuf *otherbuf;
+	struct {enum format_part_type type; char *label;} labels[] = {
+			{FORMAT_PART_FORMAT, "FORMAT"},
+			{FORMAT_PART_LITERAL, "LITERAL"},
+			{FORMAT_PART_COMMIT_HASH, "COMMIT_HASH"},
+			{FORMAT_PART_COMMIT_HASH_ABBREV, "COMMIT_HASH_ABBREV"},
+			{FORMAT_PART_PARENT_HASHES, "PARENT_HASHES"},
+			{FORMAT_PART_PARENT_HASHES_ABBREV, "PARENT_HASHES_ABBREV"},
+			{FORMAT_PART_TREE_HASH, "TREE_HASH"},
+			{FORMAT_PART_TREE_HASH_ABBREV, "TREE_HASH_ABBREV"},
+			{FORMAT_PART_AUTHOR_NAME, "AUTHOR_NAME"},
+			{FORMAT_PART_AUTHOR_NAME_MAILMAP, "AUTHOR_NAME_MAILMAP"},
+			{FORMAT_PART_AUTHOR_EMAIL, "AUTHOR_EMAIL"},
+			{FORMAT_PART_AUTHOR_EMAIL_MAILMAP, "AUTHOR_EMAIL_MAILMAP"},
+			{FORMAT_PART_AUTHOR_DATE, "AUTHOR_DATE"},
+			{FORMAT_PART_AUTHOR_DATE_RFC2822, "AUTHOR_DATE_RFC2822"},
+			{FORMAT_PART_AUTHOR_DATE_RELATIVE, "AUTHOR_DATE_RELATIVE"},
+			{FORMAT_PART_AUTHOR_DATE_UNIX, "AUTHOR_DATE_UNIX"},
+			{FORMAT_PART_AUTHOR_DATE_ISO8601, "AUTHOR_DATE_ISO8601"},
+			{FORMAT_PART_COMMITTER_NAME, "COMMITTER_NAME"},
+			{FORMAT_PART_COMMITTER_NAME_MAILMAP, "COMMITTER_NAME_MAILMAP"},
+			{FORMAT_PART_COMMITTER_EMAIL, "COMMITTER_EMAIL"},
+			{FORMAT_PART_COMMITTER_EMAIL_MAILMAP, "COMMITTER_EMAIL_MAILMAP"},
+			{FORMAT_PART_COMMITTER_DATE, "COMMITTER_DATE"},
+			{FORMAT_PART_COMMITTER_DATE_RFC2822, "COMMITTER_DATE_RFC2822"},
+			{FORMAT_PART_COMMITTER_DATE_RELATIVE, "COMMITTER_DATE_RELATIVE"},
+			{FORMAT_PART_COMMITTER_DATE_UNIX, "COMMITTER_DATE_UNIX"},
+			{FORMAT_PART_COMMITTER_DATE_ISO8601, "COMMITTER_DATE_ISO8601"},
+
+			{FORMAT_PART_DECORATE, "DECORATE"},
+			{FORMAT_PART_ENCODING, "ENCODING"},
+			{FORMAT_PART_SUBJECT, "SUBJECT"},
+			{FORMAT_PART_SUBJECT_SANITIZED, "SUBJECT_SANITIZED"},
+			{FORMAT_PART_BODY, "BODY"},
+			{FORMAT_PART_RAW_BODY, "RAW_BODY"},
+			{FORMAT_PART_NOTES, "NOTES"},
+
+			{FORMAT_PART_REFLOG_SELECTOR, "REFLOG_SELECTOR"},
+			{FORMAT_PART_REFLOG_SELECTOR_SHORT, "REFLOG_SELECTOR_SHORT"},
+			{FORMAT_PART_REFLOG_SUBJECT, "REFLOG_SUBJECT"},
+
+			{FORMAT_PART_COLOR, "COLOR"},
+			{FORMAT_PART_MARK, "MARK"},
+			{FORMAT_PART_WRAP, "WRAP"},
+			{FORMAT_PART_CONDITION_MERGE, "CONDITION:MERGE"},
+			{FORMAT_PART_CONDITION_OPT_COLOR, "CONDITION:OPT-COLOR"}
+		};
+	char *label;
+	size_t i,j;
+	strbuf_init(buf, 0);
+
+	strbuf_add_wrapped_text(buf, "{[PARTS:", indent++, 0, 0);
+	strbuf_addf(buf, "%li]\n", parts->len);
+	for (i = 0; i < parts->len; i++) {
+		part = &parts->part[i];
+		label = "UNKNOWN";
+		for (j = 0; j < ARRAY_SIZE(labels); j++) {
+			if (labels[j].type == part->type) {
+				label = labels[j].label;
+			}
+		}
+
+		strbuf_add_wrapped_text(buf, "{", indent, 0, 0);
+		strbuf_addstr(buf, label);
+
+		switch(part->magic){
+			case NO_MAGIC:
+				break;
+			case ADD_LF_BEFORE_NON_EMPTY:
+				strbuf_addstr(buf, " (ADD_LF_BEFORE_NON_EMPTY)");
+				break;
+			case DEL_LF_BEFORE_EMPTY:
+				strbuf_addstr(buf, " (DEL_LF_BEFORE_EMPTY)");
+				break;
+			case ADD_SP_BEFORE_NON_EMPTY:
+				strbuf_addstr(buf, " (ADD_SP_BEFORE_NON_EMPTY)");
+				break;
+		}
+
+		if (part->literal) {
+			strbuf_addstr(buf, " ");
+			strbuf_add_wrapped_text(buf, part->literal,
+						0, indent+strlen(label)+1, 0);
+		}
+
+		if (part->argc) {
+			strbuf_addstr(buf, "\n");
+			strbuf_add_wrapped_text(buf, "ARGS: [", indent+1, 0, 0);
+			for (j = 0; j < part->argc; j++) {
+				strbuf_add_wrapped_text(buf, part->argv[j],
+							0, indent+8, 0);
+
+				if (j < part->argc - 1)
+					strbuf_addstr(buf, ", ");
+			}
+			strbuf_addstr(buf, "]\n");
+		}
+
+		if (part->parts) {
+			strbuf_addstr(buf, "\n");
+			strbuf_add_wrapped_text(buf, "? \n",
+						indent+1, 0, 0);
+
+			otherbuf = parts_debug(part->parts, indent+3);
+			strbuf_addbuf(buf, otherbuf);
+			strbuf_release(otherbuf);
+			free(otherbuf);
+		}
+
+		if (part->alt_parts) {
+			if (!part->alt_parts)
+				strbuf_addstr(buf, "\n");
+			strbuf_add_wrapped_text(buf, ": \n",
+						indent+1, 0, 0);
+
+			otherbuf = parts_debug(part->alt_parts, indent+3);
+			strbuf_addbuf(buf, otherbuf);
+			strbuf_release(otherbuf);
+			free(otherbuf);
+		}
+
+		if (part->argc || part->parts || part->alt_parts)
+			strbuf_add_wrapped_text(buf, "}\n", indent, 0, 0);
+		else
+			strbuf_addstr(buf, "}\n");
+	}
+	strbuf_add_wrapped_text(buf, "}\n", --indent, 0, 0);
+
+	if( !indent ){
+		printf("%s", buf->buf);
+		strbuf_release(buf);
+		free(buf);
+		return NULL;
+	}
+	return buf;
 }

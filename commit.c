@@ -76,6 +76,68 @@ static unsigned long parse_commit_date(const char *buf, const char *tail)
 	return strtoul(dateptr, NULL, 10);
 }
 
+struct commit_person *parse_commit_person(struct commit_person *parsed,
+					  const char *msg, size_t len)
+{
+	int start, end;
+	char *ep;
+	const char *name_start, *name_end, *mail_start, *mail_end, *msg_end = msg+len;
+
+	/* advance 'end' to point to email start delimiter */
+	for (end = 0; end < len && msg[end] != '<'; end++)
+		; /* do nothing */
+
+	/*
+	 * When end points at the '<' that we found, it should have
+	 * matching '>' later, which means 'end' must be strictly
+	 * below len - 1.
+	 */
+	if (end >= len - 2)
+		goto skip;
+
+	/* Seek for both name and email part */
+	name_start = msg;
+	name_end = msg+end;
+	while (name_end > name_start && isspace(*(name_end-1)))
+		name_end--;
+	mail_start = msg+end+1;
+	mail_end = mail_start;
+	while (mail_end < msg_end && *mail_end != '>')
+		mail_end++;
+	if (mail_end == msg_end)
+		goto skip;
+	end = mail_end-msg;
+
+	parsed->name = name_start;
+	parsed->name_len = name_end-name_start;
+	parsed->email = mail_start;
+	parsed->email_len = mail_end-mail_start;
+
+	/* advance 'start' to point to date start delimiter */
+	for (start = end + 1; start < len && isspace(msg[start]); start++)
+		; /* do nothing */
+	if (start >= len)
+		goto skip;
+	parsed->date = strtoul(msg + start, &ep, 10);
+	if (msg + start == ep)
+		goto skip;
+
+	/* parse tz */
+	for (start = ep - msg + 1; start < len && isspace(msg[start]); start++)
+		; /* do nothing */
+	if (start + 1 < len) {
+		parsed->tz = strtoul(msg + start + 1, NULL, 10);
+		if (msg[start] == '-')
+			parsed->tz = -(parsed->tz);
+	}
+
+	parsed->buffer = msg;
+	return parsed;
+
+skip:
+	return NULL; /* unknown placeholder */
+}
+
 static struct commit_graft **commit_graft;
 static int commit_graft_alloc, commit_graft_nr;
 

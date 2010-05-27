@@ -21,6 +21,16 @@ struct commit {
 	char *buffer;
 };
 
+struct commit_person {
+	const char *buffer;
+	const char *name;
+	size_t name_len;
+	const char *email;
+	size_t email_len;
+	unsigned long date;
+	int tz;
+};
+
 extern int save_commit_buffer;
 extern const char *commit_type;
 
@@ -37,6 +47,9 @@ struct commit *lookup_commit_reference_gently(const unsigned char *sha1,
 					      int quiet);
 
 int parse_commit_buffer(struct commit *item, void *buffer, unsigned long size);
+
+struct commit_person *parse_commit_person(struct commit_person *parsed,
+					  const char *msg, size_t len);
 
 int parse_commit(struct commit *item);
 
@@ -71,6 +84,7 @@ struct pretty_print_context
 	enum date_mode date_mode;
 	int need_8bit_cte;
 	int show_notes;
+	int use_color;
 	struct reflog_walk_info *reflog_info;
 };
 
