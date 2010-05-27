@@ -445,48 +445,24 @@ static size_t format_person_part(struct strbuf *sb, char part,
 {
 	/* currently all placeholders have same length */
 	const int placeholder_len = 2;
-	int start, end, tz = 0;
-	unsigned long date = 0;
-	char *ep;
-	const char *name_start, *name_end, *mail_start, *mail_end, *msg_end = msg+len;
+	struct commit_person person = {0};
+	const char *name_start, *mail_start;
 	size_t name_len, mail_len;
 	char person_name[1024];
 	char person_mail[1024];
 
-	/* advance 'end' to point to email start delimiter */
-	for (end = 0; end < len && msg[end] != '<'; end++)
-		; /* do nothing */
-
-	/*
-	 * When end points at the '<' that we found, it should have
-	 * matching '>' later, which means 'end' must be strictly
-	 * below len - 1.
-	 */
-	if (end >= len - 2)
+	parse_commit_person(&person, msg, len);
+	if (!person.buffer)
 		goto skip;
 
-	/* Seek for both name and email part */
-	name_start = msg;
-	name_end = msg+end;
-	while (name_end > name_start && isspace(*(name_end-1)))
-		name_end--;
-	name_len = name_end-name_start+1;
-	if (name_len >= sizeof(person_name))
-		goto skip;
-	mail_start = msg+end+1;
-	mail_end = mail_start;
-	while (mail_end < msg_end && *mail_end != '>')
-		mail_end++;
-	mail_len = mail_end-mail_start+1;
-	if (mail_len >= sizeof(person_mail))
-		goto skip;
-	if (mail_end == msg_end)
-		goto skip;
-	end = mail_end-msg;
+	name_start = person.name;
+	name_len = person.name_len;
+	mail_start = person.email;
+	mail_len = person.email_len;
 
 	if (part == 'N' || part == 'E') { /* mailmap lookup */
-		strlcpy(person_name, name_start, name_len);
-		strlcpy(person_mail, mail_start, mail_len);
+		strlcpy(person_name, person.name, person.name_len);
+		strlcpy(person_mail, person.email, person.email_len);
 		mailmap_name(person_mail, sizeof(person_mail), person_name, sizeof(person_name));
 		name_start = person_name;
 		name_len = strlen(person_name);
@@ -502,41 +478,21 @@ static size_t format_person_part(struct strbuf *sb, char part,
 		return placeholder_len;
 	}
 
-	/* advance 'start' to point to date start delimiter */
-	for (start = end + 1; start < len && isspace(msg[start]); start++)
-		; /* do nothing */
-	if (start >= len)
-		goto skip;
-	date = strtoul(msg + start, &ep, 10);
-	if (msg + start == ep)
-		goto skip;
-
-	if (part == 't') {	/* date, UNIX timestamp */
-		strbuf_add(sb, msg + start, ep - (msg + start));
-		return placeholder_len;
-	}
-
-	/* parse tz */
-	for (start = ep - msg + 1; start < len && isspace(msg[start]); start++)
-		; /* do nothing */
-	if (start + 1 < len) {
-		tz = strtoul(msg + start + 1, NULL, 10);
-		if (msg[start] == '-')
-			tz = -tz;
-	}
-
 	switch (part) {
 	case 'd':	/* date */
-		strbuf_addstr(sb, show_date(date, tz, dmode));
+		strbuf_addstr(sb, show_date(person.date, person.tz, dmode));
 		return placeholder_len;
 	case 'D':	/* date, RFC2822 style */
-		strbuf_addstr(sb, show_date(date, tz, DATE_RFC2822));
+		strbuf_addstr(sb, show_date(person.date, person.tz, DATE_RFC2822));
 		return placeholder_len;
 	case 'r':	/* date, relative */
-		strbuf_addstr(sb, show_date(date, tz, DATE_RELATIVE));
+		strbuf_addstr(sb, show_date(person.date, person.tz, DATE_RELATIVE));
 		return placeholder_len;
 	case 'i':	/* date, ISO 8601 */
-		strbuf_addstr(sb, show_date(date, tz, DATE_ISO8601));
+		strbuf_addstr(sb, show_date(person.date, person.tz, DATE_ISO8601));
+		return placeholder_len;
+	case 't':	/* date, UNIX timestamp */
+		strbuf_addstr(sb, show_date(person.date, person.tz, DATE_UNIX));
 		return placeholder_len;
 	}
 
