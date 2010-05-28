@@ -105,8 +105,8 @@ static void parts_debug(struct format_parts *parts, size_t indent)
 	size_t i;
 	strbuf_init(&buf, 0);
 
-	printf("DEBUG:\n");
-	printf("LENGTH: %d\n", parts->len);
+	strbuf_add_wrapped_text(&buf, "{[PARTS:", indent++, 0, 0);
+	strbuf_addf(&buf, "%d]\n", parts->len);
 	for (i = 0; i < parts->len; i++) {
 		part = &parts->part[i];
 		switch(part->type){
@@ -123,6 +123,7 @@ static void parts_debug(struct format_parts *parts, size_t indent)
 				break;
 		}
 	}
+	strbuf_add_wrapped_text(&buf, "}\n", --indent, 0, 0);
 
 	if( !indent ){
 		printf("%s", buf.buf);
@@ -131,24 +132,27 @@ static void parts_debug(struct format_parts *parts, size_t indent)
 
 struct format_parts *parse( const char *unparsed )
 {
-	int i;
-	size_t unparsed_length = strlen(unparsed);
 	struct format_parts *parts = format_parts_alloc();
-	const char *last_found = unparsed;
-	size_t literal_length = 0;
+	const char *c = unparsed;
+	const char *last = NULL;
 	printf("parsing: \"%s\"\n", unparsed);
 
-	for( i = 0; i < unparsed_length; i++ ){
-		printf("CHAR: %c, i: %d, literal_length: %d, last: %s\n", unparsed[i], i, literal_length, last_found);
-		switch( unparsed[i] ){
+	while (*c) { 
+		printf("CHAR: %c, last: %s\n", *c, last?last:"-");
+
+		if (!last)
+			last = c;
+
+		switch (*c) {
 			case '%':
-				parts_add_nliteral(parts, last_found, literal_length);
-				last_found += literal_length;
-				literal_length = 0;
-				if (unparsed[i+1] == '%') {
+				if (last) {
+					parts_add_nliteral(parts, last, c - last);
+					last = NULL;
+				}
+
+				if (c[1] == '%') {
 					parts_add_literal(parts, "%");
-					last_found += 2;
-					i += 1;
+					c++;
 					break;
 				}
 				//if next character is %, literal %.
@@ -171,21 +175,19 @@ struct format_parts *parse( const char *unparsed )
 				*/
 				break;
 			case '?':
-				literal_length++;
 				break;
 			case ':':
-				literal_length++;
 				break;
 			case '"':
-				literal_length++;
 				break;
 			default:
-				literal_length++;
 				break;
 		}
+		c++;
 	}
-	parts_add_nliteral(parts, last_found, literal_length);
-	literal_length = 0;
+
+	if (last)
+		parts_add_nliteral(parts, last, c - last);
 
 	printf("END OF FORMAT\n");
 	return parts;
