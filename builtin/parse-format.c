@@ -13,8 +13,8 @@ I want to parse this:
 "%n"
 "    %s%n"
 "%n"
-"%(indent:%b)%n"
-"%(notes? "%nNotes:%n%(indent:%N)%n)"
+"%w(0,4,4)%b%w%n"
+"%(notes? "%nNotes:%n%w(0,4,4)%N%w%n)"
 
 merge
 opt-abbrev-commit
@@ -70,13 +70,13 @@ struct format_part {
 	char			*format;
 	size_t			format_len;
 	char			*literal;
-	//struct format_parts	*argument;
+	struct format_parts	*args;
 	struct format_parts	*parts;
 	struct format_parts	*alt_parts;
 };
 
 #define format_parts_alloc() \
-	((struct format_part*)calloc(1, sizeof(struct format_parts)))
+	((struct format_parts*)calloc(1, sizeof(struct format_parts)))
 #define format_part_alloc() \
 	((struct format_part*)calloc(1, sizeof(struct format_part)))
 static struct format_part * parts_add(struct format_parts *parts,
@@ -131,6 +131,27 @@ static void parts_debug(struct format_parts *parts, size_t indent)
 				strbuf_add_wrapped_text(&buf, part->literal,
 							0, indent+9, 0);
 				strbuf_add(&buf, "}\n", 2);
+				break;
+			case FORMAT_PART_COMMIT_HASH:
+				strbuf_add_wrapped_text(&buf, "{COMMIT_HASH}\n",
+							indent, 0, 0);
+				break;
+			case FORMAT_PART_COMMIT_HASH_ABBREV:
+				strbuf_add_wrapped_text(&buf,
+							"{COMMIT_HASH_ABBREV}"
+							"\n",
+							indent, 0, 0);
+				break;
+			case FORMAT_PART_PARENT_HASHES:
+				strbuf_add_wrapped_text(&buf,
+							"{PARENT_HASHES}\n",
+							indent, 0, 0);
+				break;
+			case FORMAT_PART_PARENT_HASHES_ABBREV:
+				strbuf_add_wrapped_text(&buf,
+							"{PARENT_HASHES_ABBREV}"
+							"\n",
+							indent, 0, 0);
 				break;
 			default:
 				strbuf_add_wrapped_text(&buf, "{UNKNOWN}\n",
@@ -194,6 +215,8 @@ struct format_parts *parse(const char *unparsed)
 			last = c;
 
 		c += strcspn(c, "%)?:\"");
+		if (!*c)
+			break;
 
 		switch (*c) {
 			case '%':
