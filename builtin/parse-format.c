@@ -50,6 +50,7 @@ static const char * const builtin_parse_format_usage[] = {
 };
 
 enum format_part_type {
+	FORMAT_PART_UNKNOWN,
 	FORMAT_PART_LITERAL,
 	FORMAT_PART_COMMIT_HASH,
 	FORMAT_PART_COMMIT_HASH_ABBREV,
@@ -66,20 +67,34 @@ struct format_parts {
 
 struct format_part {
 	enum format_part_type	type;
+	char			*format;
+	size_t			format_len;
 	char			*literal;
 	//struct format_parts	*argument;
 	struct format_parts	*parts;
 	struct format_parts	*alt_parts;
 };
 
-#define format_parts_alloc() calloc(1, sizeof(struct format_parts))
-static void parts_add(struct format_parts *parts, enum format_part_type type)
+#define format_parts_alloc() \
+	((struct format_part*)calloc(1, sizeof(struct format_parts)))
+#define format_part_alloc() \
+	((struct format_part*)calloc(1, sizeof(struct format_part)))
+static struct format_part * parts_add(struct format_parts *parts,
+				      enum format_part_type type)
 {
 	ALLOC_GROW(parts->part, parts->len+1, parts->alloc);
 	memset(&parts->part[parts->len], 0, sizeof(parts->part[parts->len]));
 	parts->part[parts->len].type = type;
 	parts->len++;
-	return;
+	return &parts->part[parts->len-1];
+}
+
+static struct format_part * parts_add_part(struct format_parts *parts,
+					   struct format_part *part)
+{
+	struct format_part *dst = parts_add(parts, FORMAT_PART_UNKNOWN);
+	memcpy(dst, part, sizeof(*dst));
+	return dst;
 }
 
 static void parts_add_nliteral(struct format_parts *parts, const char *literal,
@@ -130,9 +145,44 @@ static void parts_debug(struct format_parts *parts, size_t indent)
 	}
 }
 
-struct format_parts *parse( const char *unparsed )
+struct format_part *parse_special(const char *unparsed)
+{
+	struct format_part *part = format_part_alloc();
+	switch (unparsed[1]) {
+		case 'h':
+			part->type = FORMAT_PART_COMMIT_HASH_ABBREV;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'H':
+			part->type = FORMAT_PART_COMMIT_HASH;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'p':
+			part->type = FORMAT_PART_PARENT_HASHES_ABBREV;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'P':
+			part->type = FORMAT_PART_PARENT_HASHES;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case '%':
+			part->type = FORMAT_PART_LITERAL;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			part->literal = "%";
+			return part;
+	}
+	return NULL;
+}
+
+struct format_parts *parse(const char *unparsed)
 {
 	struct format_parts *parts = format_parts_alloc();
+	struct format_part *part;
 	const char *c = unparsed;
 	const char *last = NULL;
 	printf("parsing: \"%s\"\n", unparsed);
@@ -143,18 +193,21 @@ struct format_parts *parse( const char *unparsed )
 		if (!last)
 			last = c;
 
+		c += strcspn(c, "%)?:\"");
+
 		switch (*c) {
 			case '%':
-				if (last) {
+				part = parse_special(c);
+				if (part) {
 					parts_add_nliteral(parts, last, c - last);
 					last = NULL;
+
+					parts_add_part(parts, part);
+					c += part->format_len;
+					free(part);
+					continue;
 				}
 
-				if (c[1] == '%') {
-					parts_add_literal(parts, "%");
-					c++;
-					break;
-				}
 				//if next character is %, literal %.
 				//else, parse_special
 				//which should return a length and fill a parse_part
