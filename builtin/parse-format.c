@@ -51,11 +51,14 @@ static const char * const builtin_parse_format_usage[] = {
 
 enum format_part_type {
 	FORMAT_PART_UNKNOWN,
+	FORMAT_PART_FORMAT,
 	FORMAT_PART_LITERAL,
 	FORMAT_PART_COMMIT_HASH,
 	FORMAT_PART_COMMIT_HASH_ABBREV,
 	FORMAT_PART_PARENT_HASHES,
-	FORMAT_PART_PARENT_HASHES_ABBREV
+	FORMAT_PART_PARENT_HASHES_ABBREV,
+
+	FORMAT_PART_CONDITION_MERGE
 };
 
 struct format_part;
@@ -70,15 +73,46 @@ struct format_part {
 	char			*format;
 	size_t			format_len;
 	char			*literal;
-	struct format_parts	*args;
+//	struct format_parts	*args;
 	struct format_parts	*parts;
 	struct format_parts	*alt_parts;
+};
+
+struct format_parse_state {
+	int	expect_quote;
+	int	expect_colon;
+	int	expect_paren;
+	int	ignore_space;
 };
 
 #define format_parts_alloc() \
 	((struct format_parts*)calloc(1, sizeof(struct format_parts)))
 #define format_part_alloc() \
 	((struct format_part*)calloc(1, sizeof(struct format_part)))
+void format_part_free(struct format_part **part);
+void format_parts_free(struct format_parts **parts)
+{
+	if(*parts->part)
+		free(*parts->part);
+	free(*parts);
+	*parts = NULL;
+}
+void format_part_free(struct format_part *part)
+{
+	if (*part->format)
+		free(*part->format);
+	if (*part->literal)
+		free(*part->literal);
+	if (*part->args)
+		format_parts_free(*part->args);
+	if (*part->parts)
+		format_parts_free(*part->parts);
+	if (*part->alt_parts)
+		format_parts_free(*part->alt_parts);
+	free(*part);
+	*part = NULL;
+}
+
 static struct format_part * parts_add(struct format_parts *parts,
 				      enum format_part_type type)
 {
@@ -166,6 +200,75 @@ static void parts_debug(struct format_parts *parts, size_t indent)
 	}
 }
 
+struct format_part *parse_extended(const char *unparsed)
+{
+	struct format_part *part = format_part_alloc();
+	struct format_parts *parts;
+	struct format_parts *alt_parts;
+	struct format_parse_state state = {0};
+	const char *c = unparsed + 2;
+	int condition = 0;
+	c += strspn(c, " \t\r\n");
+
+	if (*c == '"') {
+		part->type = FORMAT_PART_FORMAT;
+		state.expect_quote = 1;
+	} else if (!prefixcmp(c, "merge")) {
+		part->type = FORMAT_PART_CONDITION_MERGE;
+		condition = 1;
+		c += 5;
+	} else {
+		state.expect_paren = 1;
+	}
+
+	if (condition) {
+		c += strspn(c, " \t\r\n");
+		if (*c != '?')
+			goto fail;
+
+		c++;
+		c += strspn(c, " \t\r\n");
+		state.expect_quote = *c == '"';
+		state.expect_colon = !state.expect_quote;
+		state.expect_paren = !state.expect_quote;
+		state.ignore_space = !state.expect_quote;
+	}
+
+	part->parts = parse(c);
+	if (!part->parts)
+		goto fail;
+
+	c += part->parts.format_len;
+
+	if (condition) {
+		if (state.expect_quote && *c == '"') {
+			c++;
+			c += strspn(c, " \t\r\n");
+		}
+
+		if (*c == ':'){
+			c++;
+			c += strspn(c, " \t\r\n");
+			state.expect_quote = *c == '"';
+			state.expect_colon = !state.expect_quote;
+			state.expect_paren = !state.expect_quote;
+			state.ignore_space = !state.expect_quote;
+
+			part->alt_parts = parse(c);
+			if (!part->parts)
+				goto fail;
+		}
+	}
+
+	if (!strchr(c, ')')
+		goto fail;
+
+	return part;
+fail:
+	format_part_free(&part);
+	return NULL;
+}
+
 struct format_part *parse_special(const char *unparsed)
 {
 	struct format_part *part = format_part_alloc();
@@ -196,7 +299,11 @@ struct format_part *parse_special(const char *unparsed)
 			part->format_len = strlen(part->format);
 			part->literal = "%";
 			return part;
+		case '(':
+			return parse_extended(unparsed);
 	}
+
+	format_part_free(&part);
 	return NULL;
 }
 
