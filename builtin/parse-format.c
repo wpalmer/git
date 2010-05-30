@@ -42,6 +42,28 @@ parse into a tree of:
 		}
 	]
 
+
+	foobar%("baz")
+	foobar%("baz%(bash ? ")
+	                     ^- what's this mean?
+			     	well, it's a " with no end-quote, so %(bash...) returns NULL
+				so %(bash is literal, so the " means the end of %("baz
+
+				So, do we need to know at the point of "%(bash ?" that we are
+				already within a quote? no.
+
+	foobar%(bar ? %(baz)
+	                   ^- here we complete %(baz, but %(bar? is incomplete. So, %(bar is taken
+			      as literal, and %(baz) is parsed again
+
+			      Perhaps the rule is "if ambiguous, the shortest paren will win"?
+
+	foobar%(bar ? baz ? bam)
+			  ^- this is a problem, and we should not allow it
+	foobar%(bar ? baz : baz : baz )
+	                        ^- this is a problem too
+
+	bleh%("foobar%(foo"  bleh)"
 */
 
 static const char * const builtin_parse_format_usage[] = {
@@ -63,6 +85,8 @@ enum format_part_type {
 
 struct format_part;
 struct format_parts {
+	char	*format;
+	size_t	format_len;
 	size_t len;
 	size_t alloc;
 	struct format_part	*part;
@@ -79,10 +103,13 @@ struct format_part {
 };
 
 struct format_parse_state {
+//	format_parse_state *parent;
 	int	expect_quote;
-	int	expect_colon;
-	int	expect_paren;
+	int	expect_colon; // implies "error on question"
+	int	expect_paren; // if !expect_colon, error when colon found. implies error on question.
 	int	ignore_space;
+
+	char	found;
 };
 
 #define format_parts_alloc() \
@@ -92,23 +119,23 @@ struct format_parse_state {
 void format_part_free(struct format_part **part);
 void format_parts_free(struct format_parts **parts)
 {
-	if(*parts->part)
-		free(*parts->part);
+	if((*parts)->part)
+		free((*parts)->part);
 	free(*parts);
 	*parts = NULL;
 }
-void format_part_free(struct format_part *part)
+void format_part_free(struct format_part **part)
 {
-	if (*part->format)
-		free(*part->format);
-	if (*part->literal)
-		free(*part->literal);
-	if (*part->args)
-		format_parts_free(*part->args);
-	if (*part->parts)
-		format_parts_free(*part->parts);
-	if (*part->alt_parts)
-		format_parts_free(*part->alt_parts);
+	if ((*part)->format)
+		free((*part)->format);
+	if ((*part)->literal)
+		free((*part)->literal);
+//	if ((*part)->args)
+//		format_parts_free((*part)->args);
+	if ((*part)->parts)
+		format_parts_free(&(*part)->parts);
+	if ((*part)->alt_parts)
+		format_parts_free(&(*part)->alt_parts);
 	free(*part);
 	*part = NULL;
 }
@@ -260,10 +287,11 @@ struct format_part *parse_extended(const char *unparsed)
 		}
 	}
 
-	if (!strchr(c, ')')
+	if (!strchr(c, ')'))
 		goto fail;
 
 	return part;
+
 fail:
 	format_part_free(&part);
 	return NULL;
@@ -307,12 +335,20 @@ struct format_part *parse_special(const char *unparsed)
 	return NULL;
 }
 
-struct format_parts *parse(const char *unparsed)
+struct format_parts *parse_format(const char *unparsed,
+				  format_parse_state *state)
 {
 	struct format_parts *parts = format_parts_alloc();
 	struct format_part *part;
 	const char *c = unparsed;
 	const char *last = NULL;
+	const char special[11] = sprintf("%%%s%s%s%s",
+					 state->expect_quote ? "\\\"" : "",
+					 state->expect_colon ||
+					  state->expect_paren ? ":?" : "",
+					 state->expect_paren ? ")" : "",
+					 state->ignore_space ? " \t\r\n" : ""
+				);
 	printf("parsing: \"%s\"\n", unparsed);
 
 	while (*c) { 
@@ -321,13 +357,13 @@ struct format_parts *parse(const char *unparsed)
 		if (!last)
 			last = c;
 
-		c += strcspn(c, "%)?:\"");
+		c += strcspn(c, special);
 		if (!*c)
 			break;
 
 		switch (*c) {
 			case '%':
-				part = parse_special(c);
+				part = parse_special(c, state);
 				if (part) {
 					parts_add_nliteral(parts, last, c - last);
 					last = NULL;
@@ -337,43 +373,76 @@ struct format_parts *parse(const char *unparsed)
 					free(part);
 					continue;
 				}
-
-				//if next character is %, literal %.
-				//else, parse_special
-				//which should return a length and fill a parse_part
-				// maybe just return a parse_part, which should keep track of
-				// the length of its origin format
 				break;
 			case ')':
-				//if expecting ), return end-of-paren
-				//else, literal )
-
-				/*
-				but it's not as simple as that:
-					- we may be inside parens, but not expecting them yet
-						%(a-condition)
-						             ^-- HERE, we were expecting space or ?
-					- we may be inside parens, and parens are okay, but we're
-					  also inside an explicit literal
-				*/
+				if (state->expect_paren) {
+					state->found = ')';
+					goto fail;
+				}
 				break;
 			case '?':
+				if (state->expect_colon || state->expect_paren) {
+					state->found = '?';
+					goto fail;
+				}
 				break;
 			case ':':
+				if (state->expect_colon || state->expect_paren) {
+					state->found = ':';		
+					if (state->expect_colon)
+						goto success;
+					goto fail;
+				}
+				break;
+			case '\\':
+				if (state->expect_quote) {
+					parts_add_nliteral(parts, last, c - last);
+					last = NULL;
+					parts_add_literal(parts, "\"");
+					c += 1;
+				}
 				break;
 			case '"':
+				if (state->expect_quote) {
+					state->found = '"';
+					goto success;
+				}
 				break;
-			default:
+			case ' ':
+			case '\t':
+			case '\r':
+			case '\n':
+				if (state->ignore_space) {
+					if (last)
+						parts_add_nliteral(parts, last, c - last);
+					last = NULL;
+					c += strspn(c, " \t\r\n");
+				}
 				break;
 		}
 		c++;
 	}
 
+success:
 	if (last)
 		parts_add_nliteral(parts, last, c - last);
 
-	printf("END OF FORMAT\n");
+	parts->format = xstrndup(unparsed, c - unparsed)
+	parts->format_len = c - unparsed;
+	printf("END OF FORMAT: %*s\n", parts->format, parts->format_len);
 	return parts;
+
+fail:
+	format_parts_free(parts);
+	printf("ABORT FORMAT\n");
+	return NULL;
+}
+
+// should never return NULL;
+struct format_parts *parse(const char *unparsed)
+{
+	format_state state = {0};
+	return parse(unparsed, state);
 }
 
 static int quiet = 0;
