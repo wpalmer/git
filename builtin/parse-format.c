@@ -176,64 +176,76 @@ static void parts_add_literal(struct format_parts *parts, const char *literal)
 	return;
 }
 
-static void parts_debug(struct format_parts *parts, size_t indent)
+static struct strbuf * parts_debug(struct format_parts *parts, size_t indent)
 {
 	struct format_part *part;
-	struct strbuf buf = {0};
+	struct strbuf *buf = xcalloc(1, sizeof(*buf));
+	struct strbuf *otherbuf;
 	size_t i;
-	strbuf_init(&buf, 0);
+	strbuf_init(buf, 0);
 
-	strbuf_add_wrapped_text(&buf, "{[PARTS:", indent++, 0, 0);
-	strbuf_addf(&buf, "%d]\n", parts->len);
+	strbuf_add_wrapped_text(buf, "{[PARTS:", indent++, 0, 0);
+	strbuf_addf(buf, "%d]\n", parts->len);
 	for (i = 0; i < parts->len; i++) {
 		part = &parts->part[i];
 		switch(part->type){
+			case FORMAT_PART_FORMAT:
+				strbuf_add_wrapped_text(buf, "{FORMAT\n",
+							indent, 0, 0);
+				otherbuf = parts_debug(part->parts, indent+1);
+				strbuf_addbuf(buf, otherbuf);
+				strbuf_release(otherbuf);
+				free(otherbuf);
+				strbuf_add_wrapped_text(buf, "}\n", indent, 0, 0);
+				break;
 			case FORMAT_PART_LITERAL:
-				strbuf_add_wrapped_text(&buf, "{LITERAL ",
+				strbuf_add_wrapped_text(buf, "{LITERAL ",
 							indent, indent, 0);
-				strbuf_add_wrapped_text(&buf, part->literal,
+				strbuf_add_wrapped_text(buf, part->literal,
 							0, indent+9, 0);
-				strbuf_add(&buf, "}\n", 2);
+				strbuf_add(buf, "}\n", 2);
 				break;
 			case FORMAT_PART_COMMIT_HASH:
-				strbuf_add_wrapped_text(&buf, "{COMMIT_HASH}\n",
+				strbuf_add_wrapped_text(buf, "{COMMIT_HASH}\n",
 							indent, 0, 0);
 				break;
 			case FORMAT_PART_COMMIT_HASH_ABBREV:
-				strbuf_add_wrapped_text(&buf,
+				strbuf_add_wrapped_text(buf,
 							"{COMMIT_HASH_ABBREV}"
 							"\n",
 							indent, 0, 0);
 				break;
 			case FORMAT_PART_PARENT_HASHES:
-				strbuf_add_wrapped_text(&buf,
+				strbuf_add_wrapped_text(buf,
 							"{PARENT_HASHES}\n",
 							indent, 0, 0);
 				break;
 			case FORMAT_PART_PARENT_HASHES_ABBREV:
-				strbuf_add_wrapped_text(&buf,
+				strbuf_add_wrapped_text(buf,
 							"{PARENT_HASHES_ABBREV}"
 							"\n",
 							indent, 0, 0);
 				break;
 			default:
-				strbuf_add_wrapped_text(&buf, "{UNKNOWN}\n",
+				strbuf_add_wrapped_text(buf, "{UNKNOWN}\n",
 							indent, 0, 0);
 				break;
 		}
 	}
-	strbuf_add_wrapped_text(&buf, "}\n", --indent, 0, 0);
+	strbuf_add_wrapped_text(buf, "}\n", --indent, 0, 0);
 
 	if( !indent ){
-		printf("%s", buf.buf);
+		printf("%s", buf->buf);
+		strbuf_release(buf);
+		free(buf);
+		return NULL;
 	}
+	return buf;
 }
 
 struct format_part *parse_extended(const char *unparsed)
 {
 	struct format_part *part = format_part_alloc();
-	struct format_parts *parts;
-	struct format_parts *alt_parts;
 	struct format_parse_state state = {0};
 	const char *c = unparsed + 2;
 	int condition = 0;
@@ -292,6 +304,8 @@ struct format_part *parse_extended(const char *unparsed)
 	if (!strchr(c, ')'))
 		goto fail;
 
+	part->format = xstrndup(unparsed, c - unparsed);
+	part->format_len = c - unparsed;
 	return part;
 
 fail:
@@ -344,13 +358,13 @@ struct format_parts *parse_format(const char *unparsed,
 	struct format_part *part;
 	const char *c = unparsed;
 	const char *last = NULL;
-	const char special[11] = sprintf("%%%s%s%s%s",
-					 state->expect_quote ? "\\\"" : "",
-					 state->expect_colon ||
-					  state->expect_paren ? ":?" : "",
-					 state->expect_paren ? ")" : "",
-					 state->ignore_space ? " \t\r\n" : ""
-				);
+	char special[11];
+	
+	sprintf(special, "%%%s%s%s%s",
+		state->expect_quote ? "\\\"" : "",
+		state->expect_colon || state->expect_paren ? ":?" : "",
+		state->expect_paren ? ")" : "",
+		state->ignore_space ? " \t\r\n" : "");
 	printf("parsing: \"%s\"\n", unparsed);
 
 	while (*c) { 
@@ -365,7 +379,7 @@ struct format_parts *parse_format(const char *unparsed,
 
 		switch (*c) {
 			case '%':
-				part = parse_special(c, state);
+				part = parse_special(c);
 				if (part) {
 					parts_add_nliteral(parts, last, c - last);
 					last = NULL;
@@ -429,13 +443,13 @@ success:
 	if (last)
 		parts_add_nliteral(parts, last, c - last);
 
-	parts->format = xstrndup(unparsed, c - unparsed)
+	parts->format = xstrndup(unparsed, c - unparsed);
 	parts->format_len = c - unparsed;
-	printf("END OF FORMAT: %*s\n", parts->format, parts->format_len);
+	printf("END OF FORMAT: %*s\n", parts->format_len, parts->format);
 	return parts;
 
 fail:
-	format_parts_free(parts);
+	format_parts_free(&parts);
 	printf("ABORT FORMAT\n");
 	return NULL;
 }
@@ -443,8 +457,8 @@ fail:
 // should never return NULL;
 struct format_parts *parse(const char *unparsed)
 {
-	format_state state = {0};
-	return parse(unparsed, state);
+	struct format_parse_state state = {0};
+	return parse_format(unparsed, &state);
 }
 
 static int quiet = 0;
