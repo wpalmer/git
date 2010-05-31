@@ -112,6 +112,8 @@ struct format_parse_state {
 	char	found;
 };
 
+struct format_parts *parse_format(const char *unparsed,
+				  struct format_parse_state *state);
 #define format_parts_alloc() \
 	((struct format_parts*)calloc(1, sizeof(struct format_parts)))
 #define format_part_alloc() \
@@ -261,11 +263,11 @@ struct format_part *parse_extended(const char *unparsed)
 		state.ignore_space = !state.expect_quote;
 	}
 
-	part->parts = parse(c);
+	part->parts = parse_format(c, &state);
 	if (!part->parts)
 		goto fail;
 
-	c += part->parts.format_len;
+	c += part->parts->format_len;
 
 	if (condition) {
 		if (state.expect_quote && *c == '"') {
@@ -281,7 +283,7 @@ struct format_part *parse_extended(const char *unparsed)
 			state.expect_paren = !state.expect_quote;
 			state.ignore_space = !state.expect_quote;
 
-			part->alt_parts = parse(c);
+			part->alt_parts = parse_format(c, &state);
 			if (!part->parts)
 				goto fail;
 		}
@@ -336,7 +338,7 @@ struct format_part *parse_special(const char *unparsed)
 }
 
 struct format_parts *parse_format(const char *unparsed,
-				  format_parse_state *state)
+				  struct format_parse_state *state)
 {
 	struct format_parts *parts = format_parts_alloc();
 	struct format_part *part;
