@@ -282,6 +282,7 @@ struct format_part *parse_extended(const char *unparsed)
 		condition = 1;
 		c += 5;
 	} else {
+		part->type = FORMAT_PART_FORMAT;
 		state.expect_paren = 1;
 		state.ignore_space = 1;
 	}
