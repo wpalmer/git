@@ -226,6 +226,28 @@ static struct strbuf * parts_debug(struct format_parts *parts, size_t indent)
 							"\n",
 							indent, 0, 0);
 				break;
+			case FORMAT_PART_CONDITION_MERGE:
+				strbuf_add_wrapped_text(buf, "{CONDITION:MERGE\n",
+							indent, 0, 0);
+
+				strbuf_add_wrapped_text(buf, "? \n",
+							indent+1, 0, 0);
+				otherbuf = parts_debug(part->parts, indent+3);
+				strbuf_addbuf(buf, otherbuf);
+				strbuf_release(otherbuf);
+				free(otherbuf);
+
+				if (part->alt_parts) {
+					strbuf_add_wrapped_text(buf, ": \n",
+								indent+1, 0, 0);
+					otherbuf = parts_debug(part->alt_parts,
+							       indent+3);
+					strbuf_addbuf(buf, otherbuf);
+					strbuf_release(otherbuf);
+					free(otherbuf);
+				}
+				strbuf_add_wrapped_text(buf, "}\n", indent, 0, 0);
+				break;
 			default:
 				strbuf_add_wrapped_text(buf, "{UNKNOWN}\n",
 							indent, 0, 0);
@@ -254,61 +276,96 @@ struct format_part *parse_extended(const char *unparsed)
 	if (*c == '"') {
 		part->type = FORMAT_PART_FORMAT;
 		state.expect_quote = 1;
+		c++;
 	} else if (!prefixcmp(c, "merge")) {
 		part->type = FORMAT_PART_CONDITION_MERGE;
 		condition = 1;
 		c += 5;
 	} else {
 		state.expect_paren = 1;
+		state.ignore_space = 1;
 	}
 
 	if (condition) {
 		c += strspn(c, " \t\r\n");
-		if (*c != '?')
+		if (*c != '?'){
+			printf("NO-?\n");
 			goto fail;
+		}
 
 		c++;
 		c += strspn(c, " \t\r\n");
-		state.expect_quote = *c == '"';
+
+		if (*c == '"') {
+			state.expect_quote = 1;
+			c++;
+		}
 		state.expect_colon = !state.expect_quote;
 		state.expect_paren = !state.expect_quote;
 		state.ignore_space = !state.expect_quote;
 	}
 
+	printf("parse_format: %s\n", c);
 	part->parts = parse_format(c, &state);
-	if (!part->parts)
+	if (!part->parts){
+		printf("failed to parse %s\n", c);
 		goto fail;
+	}
 
 	c += part->parts->format_len;
+	if( state.expect_quote )
+		c++;
 
 	if (condition) {
-		if (state.expect_quote && *c == '"') {
-			c++;
-			c += strspn(c, " \t\r\n");
-		}
+		memset(&state, 0, sizeof(state));
+		c += strspn(c, " \t\r\n");
 
 		if (*c == ':'){
 			c++;
 			c += strspn(c, " \t\r\n");
-			state.expect_quote = *c == '"';
+
+			if (*c == '"') {
+				state.expect_quote = 1;
+				c++;
+			}
 			state.expect_colon = !state.expect_quote;
 			state.expect_paren = !state.expect_quote;
 			state.ignore_space = !state.expect_quote;
 
 			part->alt_parts = parse_format(c, &state);
-			if (!part->parts)
+			if (!part->alt_parts)
 				goto fail;
+
+			c += part->alt_parts->format_len;
+
+			if (*c == ':')
+				goto fail;
+
+			if (state.expect_quote) {
+				if (*c != '"')
+					goto fail;
+				c++;
+			}
+
+			c += strspn(c, " \t\r\n");
 		}
+	} else {
+		printf("not condition: %s\n", c);
+		c += strspn(c, " \t\r\n");
 	}
 
-	if (!strchr(c, ')'))
+	if (*c != ')'){
+		printf("no end in sight: %s\n", c);
 		goto fail;
+	}
+	c++;
 
 	part->format = xstrndup(unparsed, c - unparsed);
 	part->format_len = c - unparsed;
 	return part;
 
 fail:
+	printf("EXTENDED FAIL: %s -- %s\n", unparsed, c);
 	format_part_free(&part);
 	return NULL;
 }
@@ -359,13 +416,19 @@ struct format_parts *parse_format(const char *unparsed,
 	const char *c = unparsed;
 	const char *last = NULL;
 	char special[11];
+	char dspecial[11];
 	
 	sprintf(special, "%%%s%s%s%s",
 		state->expect_quote ? "\\\"" : "",
 		state->expect_colon || state->expect_paren ? ":?" : "",
 		state->expect_paren ? ")" : "",
 		state->ignore_space ? " \t\r\n" : "");
-	printf("parsing: \"%s\"\n", unparsed);
+	sprintf(dspecial, "%%%s%s%s%s",
+		state->expect_quote ? "\\\"" : "",
+		state->expect_colon || state->expect_paren ? ":?" : "",
+		state->expect_paren ? ")" : "",
+		state->ignore_space ? " trn" : "");
+	printf("parsing: \"%s\" with specials: [%s]\n", unparsed, dspecial);
 
 	while (*c) { 
 		printf("CHAR: %c, last: %s\n", *c, last?last:"-");
@@ -393,7 +456,7 @@ struct format_parts *parse_format(const char *unparsed,
 			case ')':
 				if (state->expect_paren) {
 					state->found = ')';
-					goto fail;
+					goto success;
 				}
 				break;
 			case '?':
@@ -433,11 +496,14 @@ struct format_parts *parse_format(const char *unparsed,
 						parts_add_nliteral(parts, last, c - last);
 					last = NULL;
 					c += strspn(c, " \t\r\n");
+					continue;
 				}
 				break;
 		}
 		c++;
 	}
+
+	printf("[natural end]\n");
 
 success:
 	if (last)
@@ -445,7 +511,7 @@ success:
 
 	parts->format = xstrndup(unparsed, c - unparsed);
 	parts->format_len = c - unparsed;
-	printf("END OF FORMAT: %*s\n", parts->format_len, parts->format);
+	printf("END OF FORMAT: (%d) %*s\n", parts->format_len, parts->format_len, parts->format);
 	return parts;
 
 fail:
