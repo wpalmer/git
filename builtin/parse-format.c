@@ -97,7 +97,7 @@ struct format_part {
 	char			*format;
 	size_t			format_len;
 	char			*literal;
-//	struct format_parts	*args;
+	struct format_parts	*args;
 	struct format_parts	*parts;
 	struct format_parts	*alt_parts;
 };
@@ -181,78 +181,64 @@ static struct strbuf * parts_debug(struct format_parts *parts, size_t indent)
 	struct format_part *part;
 	struct strbuf *buf = xcalloc(1, sizeof(*buf));
 	struct strbuf *otherbuf;
-	size_t i;
+	struct {enum format_part_type type; char *label;} labels[] = {
+			{FORMAT_PART_FORMAT, "FORMAT"},
+			{FORMAT_PART_LITERAL, "LITERAL"},
+			{FORMAT_PART_COMMIT_HASH, "COMMIT-HASH"},
+			{FORMAT_PART_COMMIT_HASH_ABBREV, "COMMIT-HASH-ABBREV"},
+			{FORMAT_PART_PARENT_HASHES, "PARENT-HASHES"},
+			{FORMAT_PART_PARENT_HASHES_ABBREV, "PARENT-HASHES-ABBREV"},
+			{FORMAT_PART_CONDITION_MERGE, "CONDITION:MERGE"}
+		};
+	char *label;
+	size_t i,j;
 	strbuf_init(buf, 0);
 
 	strbuf_add_wrapped_text(buf, "{[PARTS:", indent++, 0, 0);
 	strbuf_addf(buf, "%d]\n", parts->len);
 	for (i = 0; i < parts->len; i++) {
 		part = &parts->part[i];
-		switch(part->type){
-			case FORMAT_PART_FORMAT:
-				strbuf_add_wrapped_text(buf, "{FORMAT\n",
-							indent, 0, 0);
-				otherbuf = parts_debug(part->parts, indent+1);
-				strbuf_addbuf(buf, otherbuf);
-				strbuf_release(otherbuf);
-				free(otherbuf);
-				strbuf_add_wrapped_text(buf, "}\n", indent, 0, 0);
-				break;
-			case FORMAT_PART_LITERAL:
-				strbuf_add_wrapped_text(buf, "{LITERAL ",
-							indent, indent, 0);
-				strbuf_add_wrapped_text(buf, part->literal,
-							0, indent+9, 0);
-				strbuf_add(buf, "}\n", 2);
-				break;
-			case FORMAT_PART_COMMIT_HASH:
-				strbuf_add_wrapped_text(buf, "{COMMIT_HASH}\n",
-							indent, 0, 0);
-				break;
-			case FORMAT_PART_COMMIT_HASH_ABBREV:
-				strbuf_add_wrapped_text(buf,
-							"{COMMIT_HASH_ABBREV}"
-							"\n",
-							indent, 0, 0);
-				break;
-			case FORMAT_PART_PARENT_HASHES:
-				strbuf_add_wrapped_text(buf,
-							"{PARENT_HASHES}\n",
-							indent, 0, 0);
-				break;
-			case FORMAT_PART_PARENT_HASHES_ABBREV:
-				strbuf_add_wrapped_text(buf,
-							"{PARENT_HASHES_ABBREV}"
-							"\n",
-							indent, 0, 0);
-				break;
-			case FORMAT_PART_CONDITION_MERGE:
-				strbuf_add_wrapped_text(buf, "{CONDITION:MERGE\n",
-							indent, 0, 0);
-
-				strbuf_add_wrapped_text(buf, "? \n",
-							indent+1, 0, 0);
-				otherbuf = parts_debug(part->parts, indent+3);
-				strbuf_addbuf(buf, otherbuf);
-				strbuf_release(otherbuf);
-				free(otherbuf);
-
-				if (part->alt_parts) {
-					strbuf_add_wrapped_text(buf, ": \n",
-								indent+1, 0, 0);
-					otherbuf = parts_debug(part->alt_parts,
-							       indent+3);
-					strbuf_addbuf(buf, otherbuf);
-					strbuf_release(otherbuf);
-					free(otherbuf);
-				}
-				strbuf_add_wrapped_text(buf, "}\n", indent, 0, 0);
-				break;
-			default:
-				strbuf_add_wrapped_text(buf, "{UNKNOWN}\n",
-							indent, 0, 0);
-				break;
+		label = "UNKNOWN";
+		for (j = 0; j < ARRAY_SIZE(labels); j++) {
+			if (labels[j].type == part->type) {
+				label = labels[j].label;
+			}
 		}
+
+		strbuf_add_wrapped_text(buf, "{", indent, 0, 0);
+		strbuf_addstr(buf, label);
+		if (part->literal) {
+			strbuf_addstr(buf, " ");
+			strbuf_add_wrapped_text(buf, part->literal,
+						0, indent+strlen(label)+1, 0);
+		}
+
+		if (part->parts) {
+			strbuf_addstr(buf, "\n");
+			strbuf_add_wrapped_text(buf, "? \n",
+						indent+1, 0, 0);
+
+			otherbuf = parts_debug(part->parts, indent+3);
+			strbuf_addbuf(buf, otherbuf);
+			strbuf_release(otherbuf);
+			free(otherbuf);
+		}
+
+		if (part->alt_parts) {
+			strbuf_addstr(buf, "\n");
+			strbuf_add_wrapped_text(buf, ": \n",
+						indent+1, 0, 0);
+
+			otherbuf = parts_debug(part->alt_parts, indent+3);
+			strbuf_addbuf(buf, otherbuf);
+			strbuf_release(otherbuf);
+			free(otherbuf);
+		}
+
+		if (part->parts || part->alt_parts)
+			strbuf_add_wrapped_text(buf, "}\n", indent, 0, 0);
+		else
+			strbuf_addstr(buf, "}\n");
 	}
 	strbuf_add_wrapped_text(buf, "}\n", --indent, 0, 0);
 
