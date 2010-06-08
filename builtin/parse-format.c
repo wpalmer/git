@@ -25,7 +25,28 @@ indent
 notes
 notes(refspec)
 notes("refspec")
+notes:refspec
+pretty:format-or-alias
+format:format
+tformat:format?
 
+pretty: "hello"
+%(pretty: git-maybe-mergeline)
+		^-- if git-maybe-mergeline references itself, then literal
+		-> but how do we determine this?
+			-> pass in redirection-depth, and abort if > num_aliases?
+			-> but that will only abort /one/, we want the alias to act
+				as if undefined if it references itself, right?
+
+foo = %(pretty:bar)
+bar = %(pretty:baz)
+baz = %(pretty:foo)
+
+--pretty=%(pretty:foo)
+	-> should treat %(pretty:foo) as literal, because "foo" is not a valid alias, because it references itself
+		-> so, parse all aliases as we read them? seems wasteful, but simplifies things. This way alias
+		   loops brought on by %(pretty:...) specification are caught at the same time other loops are.
+		-> but it makes more sense to me to actually make the reference at the time of thingy
 
 
 parse into a tree of:
@@ -75,10 +96,48 @@ enum format_part_type {
 	FORMAT_PART_UNKNOWN,
 	FORMAT_PART_FORMAT,
 	FORMAT_PART_LITERAL,
+
 	FORMAT_PART_COMMIT_HASH,
 	FORMAT_PART_COMMIT_HASH_ABBREV,
 	FORMAT_PART_PARENT_HASHES,
 	FORMAT_PART_PARENT_HASHES_ABBREV,
+	FORMAT_PART_TREE_HASH,
+	FORMAT_PART_TREE_HASH_ABBREV,
+
+	FORMAT_PART_AUTHOR_NAME,
+	FORMAT_PART_AUTHOR_NAME_MAILMAP,
+	FORMAT_PART_AUTHOR_EMAIL,
+	FORMAT_PART_AUTHOR_EMAIL_MAILMAP,
+	FORMAT_PART_AUTHOR_DATE,
+	FORMAT_PART_AUTHOR_DATE_RFC2822,
+	FORMAT_PART_AUTHOR_DATE_RELATIVE,
+	FORMAT_PART_AUTHOR_DATE_UNIX,
+	FORMAT_PART_AUTHOR_DATE_ISO8601,
+	FORMAT_PART_COMMITTER_NAME,
+	FORMAT_PART_COMMITTER_NAME_MAILMAP,
+	FORMAT_PART_COMMITTER_EMAIL,
+	FORMAT_PART_COMMITTER_EMAIL_MAILMAP,
+	FORMAT_PART_COMMITTER_DATE,
+	FORMAT_PART_COMMITTER_DATE_RFC2822,
+	FORMAT_PART_COMMITTER_DATE_RELATIVE,
+	FORMAT_PART_COMMITTER_DATE_UNIX,
+	FORMAT_PART_COMMITTER_DATE_ISO8601,
+
+	FORMAT_PART_DECORATE,
+	FORMAT_PART_ENCODING,
+	FORMAT_PART_SUBJECT,
+	FORMAT_PART_SUBJECT_SANITIZED,
+	FORMAT_PART_BODY,
+	FORMAT_PART_RAW_BODY,
+	FORMAT_PART_NOTES,
+
+	FORMAT_PART_REFLOG_SELECTOR,
+	FORMAT_PART_REFLOG_SELECTOR_SHORT,
+	FORMAT_PART_REFLOG_SUBJECT,
+
+	FORMAT_PART_COLOR,
+	FORMAT_PART_MARK,
+	FORMAT_PART_WRAP,
 
 	FORMAT_PART_CONDITION_MERGE
 };
@@ -96,8 +155,13 @@ struct format_part {
 	enum format_part_type	type;
 	char			*format;
 	size_t			format_len;
+
+	size_t			literal_len;
 	char			*literal;
-	struct format_parts	*args;
+
+	size_t			argc;
+	char			**argv;
+
 	struct format_parts	*parts;
 	struct format_parts	*alt_parts;
 };
@@ -132,8 +196,8 @@ void format_part_free(struct format_part **part)
 		free((*part)->format);
 	if ((*part)->literal)
 		free((*part)->literal);
-//	if ((*part)->args)
-//		format_parts_free((*part)->args);
+	if ((*part)->argv)
+		free((*part)->argv);
 	if ((*part)->parts)
 		format_parts_free(&(*part)->parts);
 	if ((*part)->alt_parts)
@@ -184,10 +248,46 @@ static struct strbuf * parts_debug(struct format_parts *parts, size_t indent)
 	struct {enum format_part_type type; char *label;} labels[] = {
 			{FORMAT_PART_FORMAT, "FORMAT"},
 			{FORMAT_PART_LITERAL, "LITERAL"},
-			{FORMAT_PART_COMMIT_HASH, "COMMIT-HASH"},
-			{FORMAT_PART_COMMIT_HASH_ABBREV, "COMMIT-HASH-ABBREV"},
-			{FORMAT_PART_PARENT_HASHES, "PARENT-HASHES"},
-			{FORMAT_PART_PARENT_HASHES_ABBREV, "PARENT-HASHES-ABBREV"},
+			{FORMAT_PART_COMMIT_HASH, "COMMIT_HASH"},
+			{FORMAT_PART_COMMIT_HASH_ABBREV, "COMMIT_HASH_ABBREV"},
+			{FORMAT_PART_PARENT_HASHES, "PARENT_HASHES"},
+			{FORMAT_PART_PARENT_HASHES_ABBREV, "PARENT_HASHES_ABBREV"},
+			{FORMAT_PART_TREE_HASH, "TREE_HASH"},
+			{FORMAT_PART_TREE_HASH_ABBREV, "TREE_HASH_ABBREV"},
+			{FORMAT_PART_AUTHOR_NAME, "AUTHOR_NAME"},
+			{FORMAT_PART_AUTHOR_NAME_MAILMAP, "AUTHOR_NAME_MAILMAP"},
+			{FORMAT_PART_AUTHOR_EMAIL, "AUTHOR_EMAIL"},
+			{FORMAT_PART_AUTHOR_EMAIL_MAILMAP, "AUTHOR_EMAIL_MAILMAP"},
+			{FORMAT_PART_AUTHOR_DATE, "AUTHOR_DATE"},
+			{FORMAT_PART_AUTHOR_DATE_RFC2822, "AUTHOR_DATE_RFC2822"},
+			{FORMAT_PART_AUTHOR_DATE_RELATIVE, "AUTHOR_DATE_RELATIVE"},
+			{FORMAT_PART_AUTHOR_DATE_UNIX, "AUTHOR_DATE_UNIX"},
+			{FORMAT_PART_AUTHOR_DATE_ISO8601, "AUTHOR_DATE_ISO8601"},
+			{FORMAT_PART_COMMITTER_NAME, "COMMITTER_NAME"},
+			{FORMAT_PART_COMMITTER_NAME_MAILMAP, "COMMITTER_NAME_MAILMAP"},
+			{FORMAT_PART_COMMITTER_EMAIL, "COMMITTER_EMAIL"},
+			{FORMAT_PART_COMMITTER_EMAIL_MAILMAP, "COMMITTER_EMAIL_MAILMAP"},
+			{FORMAT_PART_COMMITTER_DATE, "COMMITTER_DATE"},
+			{FORMAT_PART_COMMITTER_DATE_RFC2822, "COMMITTER_DATE_RFC2822"},
+			{FORMAT_PART_COMMITTER_DATE_RELATIVE, "COMMITTER_DATE_RELATIVE"},
+			{FORMAT_PART_COMMITTER_DATE_UNIX, "COMMITTER_DATE_UNIX"},
+			{FORMAT_PART_COMMITTER_DATE_ISO8601, "COMMITTER_DATE_ISO8601"},
+
+			{FORMAT_PART_DECORATE, "DECORATE"},
+			{FORMAT_PART_ENCODING, "ENCODING"},
+			{FORMAT_PART_SUBJECT, "SUBJECT"},
+			{FORMAT_PART_SUBJECT_SANITIZED, "SUBJECT_SANITIZED"},
+			{FORMAT_PART_BODY, "BODY"},
+			{FORMAT_PART_RAW_BODY, "RAW_BODY"},
+			{FORMAT_PART_NOTES, "NOTES"},
+
+			{FORMAT_PART_REFLOG_SELECTOR, "REFLOG_SELECTOR"},
+			{FORMAT_PART_REFLOG_SELECTOR_SHORT, "REFLOG_SELECTOR_SHORT"},
+			{FORMAT_PART_REFLOG_SUBJECT, "REFLOG_SUBJECT"},
+
+			{FORMAT_PART_COLOR, "COLOR"},
+			{FORMAT_PART_MARK, "MARK"},
+			{FORMAT_PART_WRAP, "WRAP"},
 			{FORMAT_PART_CONDITION_MERGE, "CONDITION:MERGE"}
 		};
 	char *label;
@@ -213,6 +313,20 @@ static struct strbuf * parts_debug(struct format_parts *parts, size_t indent)
 						0, indent+strlen(label)+1, 0);
 		}
 
+		if (part->argc) {
+			strbuf_addstr(buf, "\n");
+			for (j = 0; j < part->argc; j++) {
+				strbuf_add_wrapped_text(buf, "ARGS: [",
+							indent+1, 0, 0);
+				strbuf_add_wrapped_text(buf, part->argv[j],
+							0, indent+8, 0);
+
+				if (j < part->argc - 1)
+					strbuf_addstr(buf, ", ");
+			}
+			strbuf_addstr(buf, "]\n");
+		}
+
 		if (part->parts) {
 			strbuf_addstr(buf, "\n");
 			strbuf_add_wrapped_text(buf, "? \n",
@@ -235,7 +349,7 @@ static struct strbuf * parts_debug(struct format_parts *parts, size_t indent)
 			free(otherbuf);
 		}
 
-		if (part->parts || part->alt_parts)
+		if (part->argc || part->parts || part->alt_parts)
 			strbuf_add_wrapped_text(buf, "}\n", indent, 0, 0);
 		else
 			strbuf_addstr(buf, "}\n");
@@ -360,6 +474,10 @@ fail:
 struct format_part *parse_special(const char *unparsed)
 {
 	struct format_part *part = format_part_alloc();
+	int h1,h2;
+	char c;
+	const char *s;
+
 	switch (unparsed[1]) {
 		case 'h':
 			part->type = FORMAT_PART_COMMIT_HASH_ABBREV;
@@ -380,6 +498,225 @@ struct format_part *parse_special(const char *unparsed)
 			part->type = FORMAT_PART_PARENT_HASHES;
 			part->format = xstrndup(unparsed, 2);
 			part->format_len = strlen(part->format);
+			return part;
+		case 't':
+			part->type = FORMAT_PART_TREE_HASH_ABBREV;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'T':
+			part->type = FORMAT_PART_TREE_HASH;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'a':
+			switch (unparsed[2]) {
+				case 'n':
+					part->type = FORMAT_PART_AUTHOR_NAME;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'N':
+					part->type = FORMAT_PART_AUTHOR_NAME_MAILMAP;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'e':
+					part->type = FORMAT_PART_AUTHOR_EMAIL;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'E':
+					part->type = FORMAT_PART_AUTHOR_EMAIL_MAILMAP;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'd':
+					part->type = FORMAT_PART_AUTHOR_DATE;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'D':
+					part->type = FORMAT_PART_AUTHOR_DATE_RFC2822;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'r':
+					part->type = FORMAT_PART_AUTHOR_DATE_RELATIVE;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 't':
+					part->type = FORMAT_PART_AUTHOR_DATE_UNIX;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'i':
+					part->type = FORMAT_PART_AUTHOR_DATE_ISO8601;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+					
+			}
+			break;
+		case 'c':
+			switch (unparsed[2]) {
+				case 'n':
+					part->type = FORMAT_PART_COMMITTER_NAME;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'N':
+					part->type = FORMAT_PART_COMMITTER_NAME_MAILMAP;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'e':
+					part->type = FORMAT_PART_COMMITTER_EMAIL;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'E':
+					part->type = FORMAT_PART_COMMITTER_EMAIL_MAILMAP;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'd':
+					part->type = FORMAT_PART_COMMITTER_DATE;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'D':
+					part->type = FORMAT_PART_COMMITTER_DATE_RFC2822;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'r':
+					part->type = FORMAT_PART_COMMITTER_DATE_RELATIVE;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 't':
+					part->type = FORMAT_PART_COMMITTER_DATE_UNIX;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'i':
+					part->type = FORMAT_PART_COMMITTER_DATE_ISO8601;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+			}
+			break;
+		case 'd':
+			part->type = FORMAT_PART_DECORATE;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'e':
+			part->type = FORMAT_PART_ENCODING;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 's':
+			part->type = FORMAT_PART_SUBJECT;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'f':
+			part->type = FORMAT_PART_SUBJECT_SANITIZED;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'b':
+			part->type = FORMAT_PART_BODY;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'B':
+			part->type = FORMAT_PART_RAW_BODY;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'N':
+			part->type = FORMAT_PART_NOTES;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'g':
+			switch (unparsed[2]) {
+				case 'D':
+					part->type = FORMAT_PART_REFLOG_SELECTOR;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'd':
+					part->type = FORMAT_PART_REFLOG_SELECTOR_SHORT;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 's':
+					part->type = FORMAT_PART_REFLOG_SUBJECT;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+			}
+			break;
+		case 'C':
+			part->type = FORMAT_PART_COLOR;
+			part->argc = 1;
+			part->argv = calloc(1, sizeof(char*));
+			if (unparsed[2] == '(') {
+				s = &unparsed[3];
+				s += strspn(s, " \t\r\n");
+				if (strchr(s, ')')) {
+					part->argv[0] = xstrndup(s, strcspn(s, " \t\r\n"));
+					part->format = strndup(unparsed, strcspn(unparsed, ")"));
+					part->format_len = strlen(part->format);
+					return part;
+				}
+				break;
+			}
+
+			if (!prefixcmp(&unparsed[2], "red"))
+				part->argv[0] = "red";
+			else if (!prefixcmp(&unparsed[2], "green"))
+				part->argv[0] = "green";
+			else if (!prefixcmp(&unparsed[2], "blue"))
+				part->argv[0] = "blue";
+			else if (!prefixcmp(&unparsed[2], "reset"))
+				part->argv[0] = "reset";
+
+			if (part->argv[0]) {
+				part->format = xstrndup(unparsed, 2+strlen(part->argv[0]));
+				part->format_len = strlen(part->format);
+				return part;
+			}
+			break;
+		case 'm':
+			part->type = FORMAT_PART_MARK;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'x':
+			/* %x00 == NUL, %x0a == LF, etc. */
+			if (0 <= (h1 = hexval_table[0xff & unparsed[2]]) &&
+			    h1 <= 16 &&
+			    0 <= (h2 = hexval_table[0xff & unparsed[3]]) &&
+			    h2 <= 16) {
+				part->type = FORMAT_PART_LITERAL;
+				part->format = xstrndup(unparsed, 4);
+				part->format_len = strlen(part->format);
+				c = (h1<<4)|h2;
+				part->literal = xstrndup(&c,1);
+				return part;
+			}
+			break;
+		case 'n':
+			part->type = FORMAT_PART_LITERAL;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			part->literal = "\n";
 			return part;
 		case '%':
 			part->type = FORMAT_PART_LITERAL;
