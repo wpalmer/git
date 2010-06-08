@@ -658,10 +658,10 @@ struct format_part *parse_special(const char *unparsed)
 			part->argv = calloc(1, sizeof(char*));
 			if (unparsed[2] == '(') {
 				s = &unparsed[3];
-				s += strspn(s, " \t\r\n");
-				if (strchr(s, ')')) {
-					part->argv[0] = xstrndup(s, strcspn(s, " \t\r\n"));
-					part->format = strndup(unparsed, strcspn(unparsed, ")"));
+				e = strchr(s, ')');
+				if (e) {
+					part->argv[0] = xstrndup(s, e - s);
+					part->format = strndup(unparsed, e - unparsed + 1);
 					part->format_len = strlen(part->format);
 					return part;
 				}
