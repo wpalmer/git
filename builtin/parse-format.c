@@ -142,6 +142,12 @@ enum format_part_type {
 	FORMAT_PART_CONDITION_MERGE
 };
 
+enum format_part_magic {
+	NO_MAGIC,
+	ADD_LF_BEFORE_NON_EMPTY,
+	DEL_LF_BEFORE_EMPTY
+};
+
 struct format_part;
 struct format_parts {
 	char	*format;
@@ -153,6 +159,8 @@ struct format_parts {
 
 struct format_part {
 	enum format_part_type	type;
+	enum format_part_magic	magic;
+
 	char			*format;
 	size_t			format_len;
 
@@ -307,6 +315,14 @@ static struct strbuf * parts_debug(struct format_parts *parts, size_t indent)
 
 		strbuf_add_wrapped_text(buf, "{", indent, 0, 0);
 		strbuf_addstr(buf, label);
+
+		if (part->magic) {
+			strbuf_addf(buf, " (%s)",
+				    part->magic == ADD_LF_BEFORE_NON_EMPTY ?
+				     "ADD_LF_BEFORE_NON_EMPTY" :
+				     "DEL_LF_BEFORE_EMPTY");
+		}
+
 		if (part->literal) {
 			strbuf_addstr(buf, " ");
 			strbuf_add_wrapped_text(buf, part->literal,
@@ -469,6 +485,22 @@ struct format_part *parse_special(const char *unparsed)
 	const char *s, *e;
 
 	switch (unparsed[1]) {
+		case '-':
+		case '+':
+			if (*unparsed != '%')
+				goto fail;
+
+			format_part_free(&part);
+			part = parse_special(unparsed + 1);
+			if (part) {
+				part->format_len++;
+				free(part->format);
+				part->format = xstrndup(unparsed, part->format_len);
+				part->magic = unparsed[1] == '-' ?
+					DEL_LF_BEFORE_EMPTY :
+					ADD_LF_BEFORE_NON_EMPTY;
+			}
+			return part;
 		case 'h':
 			part->type = FORMAT_PART_COMMIT_HASH_ABBREV;
 			part->format = xstrndup(unparsed, 2);
