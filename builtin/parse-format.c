@@ -175,7 +175,6 @@ struct format_part {
 };
 
 struct format_parse_state {
-//	format_parse_state *parent;
 	int	expect_quote;
 	int	expect_colon; // implies "error on question"
 	int	expect_paren; // if !expect_colon, error when colon found. implies error on question.
