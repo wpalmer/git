@@ -945,6 +945,8 @@ static size_t format_commit_item(struct strbuf *sb, const char *placeholder,
 		ADD_SP_BEFORE_NON_EMPTY
 	} magic = NO_MAGIC;
 
+printf("PLACEHOLDER: %s\n", placeholder);
+
 	switch (placeholder[0]) {
 	case '-':
 		magic = DEL_LF_BEFORE_EMPTY;
@@ -1028,6 +1030,7 @@ void format_commit_message(const struct commit *commit,
 			context.message = logmsg_reencode(commit, output_enc);
 	}
 
+printf("FORMAT: %s\n", format);
 	strbuf_expand(sb, format, format_commit_item, &context);
 	rewrap_message_tail(sb, &context, 0, 0, 0);
 
