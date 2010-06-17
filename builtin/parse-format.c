@@ -248,6 +248,14 @@ static void parts_add_literal(struct format_parts *parts, const char *literal)
 	return;
 }
 
+static void part_add_narg(struct format_part *part, const char *arg, size_t len)
+{
+	part->argv = xrealloc(part->argv, sizeof(char*) * part->argc+1);
+	part->argv[part->argc] = xstrndup(arg, len);
+	part->argc++;
+	return;
+}
+
 static struct strbuf * parts_debug(struct format_parts *parts, size_t indent)
 {
 	struct format_part *part;
@@ -745,10 +753,7 @@ struct format_part *parse_special(const char *unparsed)
 				if (e == s)
 					goto fail;
 
-				part->argv = xrealloc(part->argv,
-						      sizeof(char*) * part->argc+1);
-				part->argv[ part->argc ] = xstrndup(s, e - s);
-				part->argc++;
+				part_add_narg(part, s, e - s);
 
 				s = e + strspn(e, " \t\r\n");
 				if (*s == ')') {
