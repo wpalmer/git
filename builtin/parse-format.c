@@ -145,7 +145,8 @@ enum format_part_type {
 enum format_part_magic {
 	NO_MAGIC,
 	ADD_LF_BEFORE_NON_EMPTY,
-	DEL_LF_BEFORE_EMPTY
+	DEL_LF_BEFORE_EMPTY,
+	ADD_SP_BEFORE_NON_EMPTY
 };
 
 struct format_part;
@@ -323,11 +324,18 @@ static struct strbuf * parts_debug(struct format_parts *parts, size_t indent)
 		strbuf_add_wrapped_text(buf, "{", indent, 0, 0);
 		strbuf_addstr(buf, label);
 
-		if (part->magic) {
-			strbuf_addf(buf, " (%s)",
-				    part->magic == ADD_LF_BEFORE_NON_EMPTY ?
-				     "ADD_LF_BEFORE_NON_EMPTY" :
-				     "DEL_LF_BEFORE_EMPTY");
+		switch(part->magic){
+			case NO_MAGIC:
+				break;
+			case ADD_LF_BEFORE_NON_EMPTY:
+				strbuf_addstr(buf, " (ADD_LF_BEFORE_NON_EMPTY)");
+				break;
+			case DEL_LF_BEFORE_EMPTY:
+				strbuf_addstr(buf, " (DEL_LF_BEFORE_EMPTY)");
+				break;
+			case ADD_SP_BEFORE_NON_EMPTY:
+				strbuf_addstr(buf, " (ADD_SP_BEFORE_NON_EMPTY)");
+				break;
 		}
 
 		if (part->literal) {
@@ -494,6 +502,7 @@ struct format_part *parse_special(const char *unparsed)
 	switch (unparsed[1]) {
 		case '-':
 		case '+':
+		case ' ':
 			if (*unparsed != '%')
 				goto fail;
 
@@ -503,9 +512,18 @@ struct format_part *parse_special(const char *unparsed)
 				part->format_len++;
 				free(part->format);
 				part->format = xstrndup(unparsed, part->format_len);
-				part->magic = unparsed[1] == '-' ?
-					DEL_LF_BEFORE_EMPTY :
-					ADD_LF_BEFORE_NON_EMPTY;
+
+				switch (unparsed[1]) {
+					case '-':
+						part->magic = DEL_LF_BEFORE_EMPTY;
+						break;
+					case '+':
+						part->magic = ADD_LF_BEFORE_NON_EMPTY;
+						break;
+					case ' ':
+						part->magic = ADD_SP_BEFORE_NON_EMPTY;
+						break;
+				}
 			}
 			return part;
 		case 'h':
