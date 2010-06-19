@@ -118,18 +118,18 @@ struct format_parse_state {
 static struct format_parts *parse_format(const char *unparsed,
 				  struct format_parse_state *state);
 #define format_parts_alloc() \
-	((struct format_parts*)calloc(1, sizeof(struct format_parts)))
+	((struct format_parts*)xcalloc(1, sizeof(struct format_parts)))
 #define format_part_alloc() \
-	((struct format_part*)calloc(1, sizeof(struct format_part)))
-void format_part_free(struct format_part **part);
-void format_parts_free(struct format_parts **parts)
+	((struct format_part*)xcalloc(1, sizeof(struct format_part)))
+static void format_part_free(struct format_part **part);
+static void format_parts_free(struct format_parts **parts)
 {
 	if((*parts)->part)
 		free((*parts)->part);
 	free(*parts);
 	*parts = NULL;
 }
-void format_part_free(struct format_part **part)
+static void format_part_free(struct format_part **part)
 {
 	if ((*part)->format)
 		free((*part)->format);
@@ -168,7 +168,8 @@ static void parts_add_nliteral(struct format_parts *parts, const char *literal,
 {
 	if( len == 0 ) return;
 	parts_add(parts, FORMAT_PART_LITERAL);
-	parts->part[parts->len-1].literal = xstrndup(literal, len);
+	parts->part[parts->len-1].literal = xmemdupz(literal, len);
+	parts->part[parts->len-1].literal_len = len;
 	return;
 }
 
@@ -176,6 +177,7 @@ static void parts_add_literal(struct format_parts *parts, const char *literal)
 {
 	parts_add(parts, FORMAT_PART_LITERAL);
 	parts->part[parts->len-1].literal = xstrdup(literal);
+	parts->part[parts->len-1].literal_len = strlen(literal);
 	return;
 }
 
@@ -503,7 +505,7 @@ static struct format_part *parse_special(const char *unparsed)
 		case 'C':
 			part->type = FORMAT_PART_COLOR;
 			part->argc = 1;
-			part->argv = calloc(1, sizeof(char*));
+			part->argv = xcalloc(1, sizeof(char*));
 			if (unparsed[2] == '(') {
 				s = &unparsed[3];
 				e = strchr(s, ')');
@@ -585,7 +587,8 @@ static struct format_part *parse_special(const char *unparsed)
 				part->format = xstrndup(unparsed, 4);
 				part->format_len = strlen(part->format);
 				c = (h1<<4)|h2;
-				part->literal = xstrndup(&c,1);
+				part->literal = xmemdupz(&c, 1);
+				part->literal_len = 1;
 				return part;
 			}
 			break;
@@ -594,12 +597,14 @@ static struct format_part *parse_special(const char *unparsed)
 			part->format = xstrndup(unparsed, 2);
 			part->format_len = strlen(part->format);
 			part->literal = "\n";
+			part->literal_len = 1;
 			return part;
 		case '%':
 			part->type = FORMAT_PART_LITERAL;
 			part->format = xstrndup(unparsed, 2);
 			part->format_len = strlen(part->format);
 			part->literal = "%";
+			part->literal_len = 1;
 			return part;
 		case '(':
 			return parse_extended(unparsed);
@@ -1700,11 +1705,15 @@ void userformat_find_requirements(const char *fmt, struct userformat_want *w)
 	strbuf_release(&dummy);
 }
 
+void format_commit_message_parts(struct format_parts *parsed, struct strbuf *sb,
+				 void *context);
+
 void format_commit_message_part(struct format_part *part, struct strbuf *sb,
-				void *pretty_ctx)
+				void *context)
 {
-	struct format_commit_context *c = pretty_ctx;
+	struct format_commit_context *c = context;
 	const struct commit *commit = c->commit;
+	struct commit_list *p;
 
 	switch (part->type) {
 		case FORMAT_PART_LITERAL:
@@ -1720,6 +1729,32 @@ void format_commit_message_part(struct format_part *part, struct strbuf *sb,
 						     c->pretty_ctx->abbrev));
 			c->abbrev_commit_hash.len = sb->len - c->abbrev_commit_hash.off;
 			return;
+		case FORMAT_PART_PARENT_HASHES:
+			for (p = commit->parents; p; p = p->next) {
+				if (p != commit->parents)
+					strbuf_addch(sb, ' ');
+				strbuf_addstr(sb, sha1_to_hex(p->item->object.sha1));
+			}
+			return;
+		case FORMAT_PART_PARENT_HASHES_ABBREV:
+			if (add_again(sb, &c->abbrev_parent_hashes))
+				return;
+			for (p = commit->parents; p; p = p->next) {
+				if (p != commit->parents)
+					strbuf_addch(sb, ' ');
+				strbuf_addstr(sb, find_unique_abbrev(
+						p->item->object.sha1,
+						c->pretty_ctx->abbrev));
+			}
+			c->abbrev_parent_hashes.len = sb->len -
+						      c->abbrev_parent_hashes.off;
+			return;
+		case FORMAT_PART_CONDITION_MERGE:
+			if (commit->parents->next)
+				format_commit_message_parts(part->parts, sb, context);
+			else if(part->alt_parts)
+				format_commit_message_parts(part->alt_parts, sb, context);
+			return;
 		default:
 			strbuf_addstr(sb, "?");
 	}
@@ -1727,11 +1762,11 @@ void format_commit_message_part(struct format_part *part, struct strbuf *sb,
 }
 
 void format_commit_message_parts(struct format_parts *parsed, struct strbuf *sb,
-				 struct pretty_print_context *pretty_ctx)
+				 void *context)
 {
 	size_t i;
 	for (i = 0; i < parsed->len; i++) {
-		format_commit_message_part(&parsed->part[i], sb, (void*)pretty_ctx);
+		format_commit_message_part(&parsed->part[i], sb, context);
 	}
 }
 
