@@ -23,6 +23,699 @@ static size_t commit_formats_len;
 static size_t commit_formats_alloc;
 static struct cmt_fmt_map *find_commit_format(const char *sought);
 
+enum format_part_type {
+	FORMAT_PART_UNKNOWN,
+	FORMAT_PART_FORMAT,
+	FORMAT_PART_LITERAL,
+
+	FORMAT_PART_COMMIT_HASH,
+	FORMAT_PART_COMMIT_HASH_ABBREV,
+	FORMAT_PART_PARENT_HASHES,
+	FORMAT_PART_PARENT_HASHES_ABBREV,
+	FORMAT_PART_TREE_HASH,
+	FORMAT_PART_TREE_HASH_ABBREV,
+
+	FORMAT_PART_AUTHOR_NAME,
+	FORMAT_PART_AUTHOR_NAME_MAILMAP,
+	FORMAT_PART_AUTHOR_EMAIL,
+	FORMAT_PART_AUTHOR_EMAIL_MAILMAP,
+	FORMAT_PART_AUTHOR_DATE,
+	FORMAT_PART_AUTHOR_DATE_RFC2822,
+	FORMAT_PART_AUTHOR_DATE_RELATIVE,
+	FORMAT_PART_AUTHOR_DATE_UNIX,
+	FORMAT_PART_AUTHOR_DATE_ISO8601,
+	FORMAT_PART_COMMITTER_NAME,
+	FORMAT_PART_COMMITTER_NAME_MAILMAP,
+	FORMAT_PART_COMMITTER_EMAIL,
+	FORMAT_PART_COMMITTER_EMAIL_MAILMAP,
+	FORMAT_PART_COMMITTER_DATE,
+	FORMAT_PART_COMMITTER_DATE_RFC2822,
+	FORMAT_PART_COMMITTER_DATE_RELATIVE,
+	FORMAT_PART_COMMITTER_DATE_UNIX,
+	FORMAT_PART_COMMITTER_DATE_ISO8601,
+
+	FORMAT_PART_DECORATE,
+	FORMAT_PART_ENCODING,
+	FORMAT_PART_SUBJECT,
+	FORMAT_PART_SUBJECT_SANITIZED,
+	FORMAT_PART_BODY,
+	FORMAT_PART_RAW_BODY,
+	FORMAT_PART_NOTES,
+
+	FORMAT_PART_REFLOG_SELECTOR,
+	FORMAT_PART_REFLOG_SELECTOR_SHORT,
+	FORMAT_PART_REFLOG_SUBJECT,
+
+	FORMAT_PART_COLOR,
+	FORMAT_PART_MARK,
+	FORMAT_PART_WRAP,
+
+	FORMAT_PART_CONDITION_MERGE
+};
+
+enum format_part_magic {
+	NO_MAGIC,
+	ADD_LF_BEFORE_NON_EMPTY,
+	DEL_LF_BEFORE_EMPTY,
+	ADD_SP_BEFORE_NON_EMPTY
+};
+
+struct format_part;
+struct format_parts {
+	char	*format;
+	size_t	format_len;
+	size_t len;
+	size_t alloc;
+	struct format_part	*part;
+};
+
+struct format_part {
+	enum format_part_type	type;
+	enum format_part_magic	magic;
+
+	char			*format;
+	size_t			format_len;
+
+	size_t			literal_len;
+	char			*literal;
+
+	size_t			argc;
+	char			**argv;
+
+	struct format_parts	*parts;
+	struct format_parts	*alt_parts;
+};
+
+struct format_parse_state {
+	int	expect_quote;
+	int	expect_colon; // implies "error on question"
+	int	expect_paren; // if !expect_colon, error when colon found. implies error on question.
+	int	ignore_space;
+
+	char	found;
+};
+
+static struct format_parts *parse_format(const char *unparsed,
+				  struct format_parse_state *state);
+#define format_parts_alloc() \
+	((struct format_parts*)calloc(1, sizeof(struct format_parts)))
+#define format_part_alloc() \
+	((struct format_part*)calloc(1, sizeof(struct format_part)))
+void format_part_free(struct format_part **part);
+void format_parts_free(struct format_parts **parts)
+{
+	if((*parts)->part)
+		free((*parts)->part);
+	free(*parts);
+	*parts = NULL;
+}
+void format_part_free(struct format_part **part)
+{
+	if ((*part)->format)
+		free((*part)->format);
+	if ((*part)->literal)
+		free((*part)->literal);
+	if ((*part)->argv)
+		free((*part)->argv);
+	if ((*part)->parts)
+		format_parts_free(&(*part)->parts);
+	if ((*part)->alt_parts)
+		format_parts_free(&(*part)->alt_parts);
+	free(*part);
+	*part = NULL;
+}
+
+static struct format_part * parts_add(struct format_parts *parts,
+				      enum format_part_type type)
+{
+	ALLOC_GROW(parts->part, parts->len+1, parts->alloc);
+	memset(&parts->part[parts->len], 0, sizeof(parts->part[parts->len]));
+	parts->part[parts->len].type = type;
+	parts->len++;
+	return &parts->part[parts->len-1];
+}
+
+static struct format_part * parts_add_part(struct format_parts *parts,
+					   struct format_part *part)
+{
+	struct format_part *dst = parts_add(parts, FORMAT_PART_UNKNOWN);
+	memcpy(dst, part, sizeof(*dst));
+	return dst;
+}
+
+static void parts_add_nliteral(struct format_parts *parts, const char *literal,
+			       size_t len)
+{
+	if( len == 0 ) return;
+	parts_add(parts, FORMAT_PART_LITERAL);
+	parts->part[parts->len-1].literal = xstrndup(literal, len);
+	return;
+}
+
+static void parts_add_literal(struct format_parts *parts, const char *literal)
+{
+	parts_add(parts, FORMAT_PART_LITERAL);
+	parts->part[parts->len-1].literal = xstrdup(literal);
+	return;
+}
+
+static void part_add_narg(struct format_part *part, const char *arg, size_t len)
+{
+	part->argv = xrealloc(part->argv, sizeof(char*) * part->argc+1);
+	part->argv[part->argc] = xstrndup(arg, len);
+	part->argc++;
+	return;
+}
+
+static struct format_part *parse_extended(const char *unparsed)
+{
+	struct format_part *part = format_part_alloc();
+	struct format_parse_state state = {0};
+	const char *c = unparsed + 2;
+	int condition = 0;
+	c += strspn(c, " \t\r\n");
+
+	if (*c == '"') {
+		part->type = FORMAT_PART_FORMAT;
+		state.expect_quote = 1;
+		c++;
+	} else if (!prefixcmp(c, "merge")) {
+		part->type = FORMAT_PART_CONDITION_MERGE;
+		condition = 1;
+		c += 5;
+	} else {
+		part->type = FORMAT_PART_FORMAT;
+		state.expect_paren = 1;
+		state.ignore_space = 1;
+	}
+
+	if (condition) {
+		c += strspn(c, " \t\r\n");
+		if (*c != '?')
+			goto fail;
+
+		c++;
+		c += strspn(c, " \t\r\n");
+
+		if (*c == '"') {
+			state.expect_quote = 1;
+			c++;
+		}
+		state.expect_colon = !state.expect_quote;
+		state.expect_paren = !state.expect_quote;
+		state.ignore_space = !state.expect_quote;
+	}
+
+	part->parts = parse_format(c, &state);
+	if (!part->parts)
+		goto fail;
+
+	c += part->parts->format_len;
+	if( state.expect_quote )
+		c++;
+
+	if (condition) {
+		memset(&state, 0, sizeof(state));
+		c += strspn(c, " \t\r\n");
+
+		if (*c == ':'){
+			c++;
+			c += strspn(c, " \t\r\n");
+
+			if (*c == '"') {
+				state.expect_quote = 1;
+				c++;
+			}
+			state.expect_colon = !state.expect_quote;
+			state.expect_paren = !state.expect_quote;
+			state.ignore_space = !state.expect_quote;
+
+			part->alt_parts = parse_format(c, &state);
+			if (!part->alt_parts)
+				goto fail;
+
+			c += part->alt_parts->format_len;
+
+			if (*c == ':')
+				goto fail;
+
+			if (state.expect_quote) {
+				if (*c != '"')
+					goto fail;
+				c++;
+			}
+
+			c += strspn(c, " \t\r\n");
+		}
+	} else
+		c += strspn(c, " \t\r\n");
+
+	if (*c != ')')
+		goto fail;
+	c++;
+
+	part->format = xstrndup(unparsed, c - unparsed);
+	part->format_len = c - unparsed;
+	return part;
+
+fail:
+	format_part_free(&part);
+	return NULL;
+}
+
+static struct format_part *parse_special(const char *unparsed)
+{
+	struct format_part *part = format_part_alloc();
+	int h1,h2;
+	char c;
+	const char *s, *e;
+
+	switch (unparsed[1]) {
+		case '-':
+		case '+':
+		case ' ':
+			if (*unparsed != '%')
+				goto fail;
+
+			format_part_free(&part);
+			part = parse_special(unparsed + 1);
+			if (part) {
+				part->format_len++;
+				free(part->format);
+				part->format = xstrndup(unparsed, part->format_len);
+
+				switch (unparsed[1]) {
+					case '-':
+						part->magic = DEL_LF_BEFORE_EMPTY;
+						break;
+					case '+':
+						part->magic = ADD_LF_BEFORE_NON_EMPTY;
+						break;
+					case ' ':
+						part->magic = ADD_SP_BEFORE_NON_EMPTY;
+						break;
+				}
+			}
+			return part;
+		case 'h':
+			part->type = FORMAT_PART_COMMIT_HASH_ABBREV;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'H':
+			part->type = FORMAT_PART_COMMIT_HASH;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'p':
+			part->type = FORMAT_PART_PARENT_HASHES_ABBREV;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'P':
+			part->type = FORMAT_PART_PARENT_HASHES;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 't':
+			part->type = FORMAT_PART_TREE_HASH_ABBREV;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'T':
+			part->type = FORMAT_PART_TREE_HASH;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'a':
+			switch (unparsed[2]) {
+				case 'n':
+					part->type = FORMAT_PART_AUTHOR_NAME;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'N':
+					part->type = FORMAT_PART_AUTHOR_NAME_MAILMAP;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'e':
+					part->type = FORMAT_PART_AUTHOR_EMAIL;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'E':
+					part->type = FORMAT_PART_AUTHOR_EMAIL_MAILMAP;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'd':
+					part->type = FORMAT_PART_AUTHOR_DATE;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'D':
+					part->type = FORMAT_PART_AUTHOR_DATE_RFC2822;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'r':
+					part->type = FORMAT_PART_AUTHOR_DATE_RELATIVE;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 't':
+					part->type = FORMAT_PART_AUTHOR_DATE_UNIX;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'i':
+					part->type = FORMAT_PART_AUTHOR_DATE_ISO8601;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+					
+			}
+			break;
+		case 'c':
+			switch (unparsed[2]) {
+				case 'n':
+					part->type = FORMAT_PART_COMMITTER_NAME;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'N':
+					part->type = FORMAT_PART_COMMITTER_NAME_MAILMAP;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'e':
+					part->type = FORMAT_PART_COMMITTER_EMAIL;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'E':
+					part->type = FORMAT_PART_COMMITTER_EMAIL_MAILMAP;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'd':
+					part->type = FORMAT_PART_COMMITTER_DATE;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'D':
+					part->type = FORMAT_PART_COMMITTER_DATE_RFC2822;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'r':
+					part->type = FORMAT_PART_COMMITTER_DATE_RELATIVE;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 't':
+					part->type = FORMAT_PART_COMMITTER_DATE_UNIX;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'i':
+					part->type = FORMAT_PART_COMMITTER_DATE_ISO8601;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+			}
+			break;
+		case 'd':
+			part->type = FORMAT_PART_DECORATE;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'e':
+			part->type = FORMAT_PART_ENCODING;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 's':
+			part->type = FORMAT_PART_SUBJECT;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'f':
+			part->type = FORMAT_PART_SUBJECT_SANITIZED;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'b':
+			part->type = FORMAT_PART_BODY;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'B':
+			part->type = FORMAT_PART_RAW_BODY;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'N':
+			part->type = FORMAT_PART_NOTES;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'g':
+			switch (unparsed[2]) {
+				case 'D':
+					part->type = FORMAT_PART_REFLOG_SELECTOR;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 'd':
+					part->type = FORMAT_PART_REFLOG_SELECTOR_SHORT;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+				case 's':
+					part->type = FORMAT_PART_REFLOG_SUBJECT;
+					part->format = xstrndup(unparsed, 3);
+					part->format_len = strlen(part->format);
+					return part;
+			}
+			break;
+		case 'C':
+			part->type = FORMAT_PART_COLOR;
+			part->argc = 1;
+			part->argv = calloc(1, sizeof(char*));
+			if (unparsed[2] == '(') {
+				s = &unparsed[3];
+				e = strchr(s, ')');
+				if (e) {
+					part->argv[0] = xstrndup(s, e - s);
+					part->format = strndup(unparsed, e - unparsed + 1);
+					part->format_len = strlen(part->format);
+					return part;
+				}
+				break;
+			}
+
+			if (!prefixcmp(&unparsed[2], "red"))
+				part->argv[0] = "red";
+			else if (!prefixcmp(&unparsed[2], "green"))
+				part->argv[0] = "green";
+			else if (!prefixcmp(&unparsed[2], "blue"))
+				part->argv[0] = "blue";
+			else if (!prefixcmp(&unparsed[2], "reset"))
+				part->argv[0] = "reset";
+
+			if (part->argv[0]) {
+				part->format = xstrndup(unparsed, 2+strlen(part->argv[0]));
+				part->format_len = strlen(part->format);
+				return part;
+			}
+			break;
+		case 'm':
+			part->type = FORMAT_PART_MARK;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			return part;
+		case 'w':
+			if (unparsed[2] != '(')
+				break;
+
+			part->type = FORMAT_PART_WRAP;
+
+			s = unparsed + 3;
+			s += strspn(s, " \t\r\n");
+			if (*s == ')') {
+				s++;
+				part->format = xstrndup(unparsed, s - unparsed);
+				part->format_len = strlen(part->format);
+				return part;
+			}
+
+			while (part->argc < 3) {
+				s += strspn(s, " \t\r\n");
+
+				if (strcspn(s, "0123456789"))
+					goto fail;
+
+				e = s + strspn(s, "0123456789");
+				if (e == s)
+					goto fail;
+
+				part_add_narg(part, s, e - s);
+
+				s = e + strspn(e, " \t\r\n");
+				if (*s == ')') {
+					s++;
+					part->format = xstrndup(unparsed, s - unparsed);
+					part->format_len = strlen(part->format);
+					return part;
+				}
+
+				if (*s == ',')
+					s++;
+			}
+			break;
+		case 'x':
+			/* %x00 == NUL, %x0a == LF, etc. */
+			if (0 <= (h1 = hexval_table[0xff & unparsed[2]]) &&
+			    h1 <= 16 &&
+			    0 <= (h2 = hexval_table[0xff & unparsed[3]]) &&
+			    h2 <= 16) {
+				part->type = FORMAT_PART_LITERAL;
+				part->format = xstrndup(unparsed, 4);
+				part->format_len = strlen(part->format);
+				c = (h1<<4)|h2;
+				part->literal = xstrndup(&c,1);
+				return part;
+			}
+			break;
+		case 'n':
+			part->type = FORMAT_PART_LITERAL;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			part->literal = "\n";
+			return part;
+		case '%':
+			part->type = FORMAT_PART_LITERAL;
+			part->format = xstrndup(unparsed, 2);
+			part->format_len = strlen(part->format);
+			part->literal = "%";
+			return part;
+		case '(':
+			return parse_extended(unparsed);
+	}
+
+fail:
+	format_part_free(&part);
+	return NULL;
+}
+
+static struct format_parts *parse_format(const char *unparsed,
+				  struct format_parse_state *state)
+{
+	struct format_parts *parts = format_parts_alloc();
+	struct format_part *part;
+	const char *c = unparsed;
+	const char *last = NULL;
+	char special[11];
+	
+	sprintf(special, "%%%s%s%s%s",
+		state->expect_quote ? "\\\"" : "",
+		state->expect_colon || state->expect_paren ? ":?" : "",
+		state->expect_paren ? ")" : "",
+		state->ignore_space ? " \t\r\n" : "");
+
+	while (*c) { 
+		if (!last)
+			last = c;
+
+		c += strcspn(c, special);
+		if (!*c)
+			break;
+
+		switch (*c) {
+			case '%':
+				part = parse_special(c);
+				if (part) {
+					parts_add_nliteral(parts, last, c - last);
+					last = NULL;
+
+					parts_add_part(parts, part);
+					c += part->format_len;
+					free(part);
+					continue;
+				}
+				break;
+			case ')':
+				if (state->expect_paren) {
+					state->found = ')';
+					goto success;
+				}
+				break;
+			case '?':
+				if (state->expect_colon || state->expect_paren) {
+					state->found = '?';
+					goto fail;
+				}
+				break;
+			case ':':
+				if (state->expect_colon || state->expect_paren) {
+					state->found = ':';		
+					if (state->expect_colon)
+						goto success;
+					goto fail;
+				}
+				break;
+			case '\\':
+				if (state->expect_quote) {
+					parts_add_nliteral(parts, last, c - last);
+					last = NULL;
+					parts_add_literal(parts, "\"");
+					c += 1;
+				}
+				break;
+			case '"':
+				if (state->expect_quote) {
+					state->found = '"';
+					goto success;
+				}
+				break;
+			case ' ':
+			case '\t':
+			case '\r':
+			case '\n':
+				if (state->ignore_space) {
+					if (last)
+						parts_add_nliteral(parts, last, c - last);
+					last = NULL;
+					c += strspn(c, " \t\r\n");
+					continue;
+				}
+				break;
+		}
+		c++;
+	}
+
+success:
+	if (last)
+		parts_add_nliteral(parts, last, c - last);
+
+	parts->format = xstrndup(unparsed, c - unparsed);
+	parts->format_len = c - unparsed;
+	return parts;
+
+fail:
+	format_parts_free(&parts);
+	return NULL;
+}
+
+// should never return NULL;
+static struct format_parts *parse(const char *unparsed)
+{
+	struct format_parse_state state = {0};
+	return parse_format(unparsed, &state);
+}
+
 static void save_user_format(struct rev_info *rev, const char *cp, int is_tformat)
 {
 	free(user_format);
@@ -945,8 +1638,6 @@ static size_t format_commit_item(struct strbuf *sb, const char *placeholder,
 		ADD_SP_BEFORE_NON_EMPTY
 	} magic = NO_MAGIC;
 
-printf("PLACEHOLDER: %s\n", placeholder);
-
 	switch (placeholder[0]) {
 	case '-':
 		magic = DEL_LF_BEFORE_EMPTY;
@@ -1009,6 +1700,41 @@ void userformat_find_requirements(const char *fmt, struct userformat_want *w)
 	strbuf_release(&dummy);
 }
 
+void format_commit_message_part(struct format_part *part, struct strbuf *sb,
+				void *pretty_ctx)
+{
+	struct format_commit_context *c = pretty_ctx;
+	const struct commit *commit = c->commit;
+
+	switch (part->type) {
+		case FORMAT_PART_LITERAL:
+			strbuf_add(sb, part->literal, part->literal_len);
+			return;
+		case FORMAT_PART_COMMIT_HASH:
+			strbuf_addstr(sb, sha1_to_hex(commit->object.sha1));
+			return;
+		case FORMAT_PART_COMMIT_HASH_ABBREV:
+			if (add_again(sb, &c->abbrev_commit_hash))
+				return;
+			strbuf_addstr(sb, find_unique_abbrev(commit->object.sha1,
+						     c->pretty_ctx->abbrev));
+			c->abbrev_commit_hash.len = sb->len - c->abbrev_commit_hash.off;
+			return;
+		default:
+			strbuf_addstr(sb, "?");
+	}
+	return;
+}
+
+void format_commit_message_parts(struct format_parts *parsed, struct strbuf *sb,
+				 struct pretty_print_context *pretty_ctx)
+{
+	size_t i;
+	for (i = 0; i < parsed->len; i++) {
+		format_commit_message_part(&parsed->part[i], sb, (void*)pretty_ctx);
+	}
+}
+
 void format_commit_message(const struct commit *commit,
 			   const char *format, struct strbuf *sb,
 			   const struct pretty_print_context *pretty_ctx)
@@ -1017,6 +1743,7 @@ void format_commit_message(const struct commit *commit,
 	static const char utf8[] = "UTF-8";
 	const char *enc;
 	const char *output_enc = pretty_ctx->output_encoding;
+	struct format_parts *parsed;
 
 	memset(&context, 0, sizeof(context));
 	context.commit = commit;
@@ -1031,7 +1758,11 @@ void format_commit_message(const struct commit *commit,
 	}
 
 printf("FORMAT: %s\n", format);
-	strbuf_expand(sb, format, format_commit_item, &context);
+
+	parsed = parse(format);
+	format_commit_message_parts(parsed, sb, &context);
+
+//	strbuf_expand(sb, format, format_commit_item, &context);
 	rewrap_message_tail(sb, &context, 0, 0, 0);
 
 	if (context.message != commit->buffer)
@@ -1183,6 +1914,17 @@ char *reencode_commit_message(const struct commit *commit, const char **encoding
 }
 
 void pretty_print_commit(enum cmit_fmt fmt, const struct commit *commit,
+			 struct strbuf *sb,
+			 const struct pretty_print_context *context)
+{
+	if (fmt != CMIT_FMT_USERFORMAT)
+		die("this is a proof-of-concept, not everything works yet");
+
+	format_commit_message(commit, user_format, sb, context);
+	return;
+}
+
+void o_pretty_print_commit(enum cmit_fmt fmt, const struct commit *commit,
 			 struct strbuf *sb,
 			 const struct pretty_print_context *context)
 {
