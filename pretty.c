@@ -1726,6 +1726,7 @@ void format_commit_message_part(struct format_part *part, struct strbuf *sb,
 	const struct commit *commit = c->commit;
 	struct commit_list *p;
 	struct commit_person person = {0};
+	char mm_name[1024], mm_email[1024];
 
 	/* these are independent of the commit */
 	switch (part->type) {
@@ -1793,12 +1794,38 @@ void format_commit_message_part(struct format_part *part, struct strbuf *sb,
 		if (person.buffer)
 			strbuf_add(sb, person.name, person.name_len);
 		return;
+	case FORMAT_PART_AUTHOR_NAME_MAILMAP:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (!person.buffer)
+			return;
+
+		strlcpy(mm_name, person.name, person.name_len);
+		strlcpy(mm_email, person.email, person.email_len);
+		mailmap_name(mm_email, sizeof(mm_email),
+			     mm_name, sizeof(mm_name));
+		strbuf_addstr(sb, mm_name);
+		return;
 	case FORMAT_PART_AUTHOR_EMAIL:
 		parse_commit_person(&person,
 				    commit->buffer + c->author.off,
 				    c->author.len);
 		if (person.buffer)
 			strbuf_add(sb, person.email, person.email_len);
+		return;
+	case FORMAT_PART_AUTHOR_EMAIL_MAILMAP:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (!person.buffer)
+			return;
+
+		strlcpy(mm_name, person.name, person.name_len);
+		strlcpy(mm_email, person.email, person.email_len);
+		mailmap_name(mm_email, sizeof(mm_email),
+			     mm_name, sizeof(mm_name));
+		strbuf_addstr(sb, mm_email);
 		return;
 	default:
 		strbuf_addstr(sb, "?");
