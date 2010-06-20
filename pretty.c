@@ -503,14 +503,15 @@ static struct format_part *parse_special(const char *unparsed)
 			}
 			break;
 		case 'C':
-			part->type = FORMAT_PART_COLOR;
-			part->argc = 1;
-			part->argv = xcalloc(1, sizeof(char*));
+			part->type = FORMAT_PART_LITERAL;
+			part->literal = xcalloc(1, COLOR_MAXLEN);
 			if (unparsed[2] == '(') {
 				s = &unparsed[3];
 				e = strchr(s, ')');
 				if (e) {
-					part->argv[0] = xstrndup(s, e - s);
+					color_parse_mem(s, e - s,
+							"--pretty format", part->literal);
+					part->literal_len = strlen(part->literal);
 					part->format = strndup(unparsed, e - unparsed + 1);
 					part->format_len = strlen(part->format);
 					return part;
@@ -518,20 +519,30 @@ static struct format_part *parse_special(const char *unparsed)
 				break;
 			}
 
-			if (!prefixcmp(&unparsed[2], "red"))
-				part->argv[0] = "red";
-			else if (!prefixcmp(&unparsed[2], "green"))
-				part->argv[0] = "green";
-			else if (!prefixcmp(&unparsed[2], "blue"))
-				part->argv[0] = "blue";
-			else if (!prefixcmp(&unparsed[2], "reset"))
-				part->argv[0] = "reset";
-
-			if (part->argv[0]) {
-				part->format = xstrndup(unparsed, 2+strlen(part->argv[0]));
-				part->format_len = strlen(part->format);
-				return part;
+			if (!prefixcmp(&unparsed[2], "red")) {
+				part->literal = GIT_COLOR_RED;
+				part->literal_len = strlen(GIT_COLOR_RED);
+				part->format = xstrndup(unparsed, 5);
+				part->format_len = 5;
+			} else if (!prefixcmp(&unparsed[2], "green")) {
+				part->literal = GIT_COLOR_GREEN;
+				part->literal_len = strlen(GIT_COLOR_GREEN);
+				part->format = xstrndup(unparsed, 7);
+				part->format_len = 7;
+			} else if (!prefixcmp(&unparsed[2], "blue")) {
+				part->literal = GIT_COLOR_BLUE;
+				part->literal_len = strlen(GIT_COLOR_BLUE);
+				part->format = xstrndup(unparsed, 6);
+				part->format_len = 6;
+			} else if (!prefixcmp(&unparsed[2], "reset")) {
+				part->literal = GIT_COLOR_RESET;
+				part->literal_len = strlen(GIT_COLOR_RESET);
+				part->format = xstrndup(unparsed, 7);
+				part->format_len = 7;
 			}
+
+			if (part->literal)
+				return part;
 			break;
 		case 'm':
 			part->type = FORMAT_PART_MARK;
@@ -1714,59 +1725,111 @@ void format_commit_message_part(struct format_part *part, struct strbuf *sb,
 	struct format_commit_context *c = context;
 	const struct commit *commit = c->commit;
 	struct commit_list *p;
+	struct commit_person person = {0};
+
+	/* these are independent of the commit */
+	switch (part->type) {
+	case FORMAT_PART_LITERAL:
+		strbuf_add(sb, part->literal, part->literal_len);
+		return;
+	default:
+		break;
+	}
+
+	/* these depend on the commit */
+	if (!commit->object.parsed)
+		parse_object(commit->object.sha1);
 
 	switch (part->type) {
-		case FORMAT_PART_LITERAL:
-			strbuf_add(sb, part->literal, part->literal_len);
+	case FORMAT_PART_COMMIT_HASH:
+		strbuf_addstr(sb, sha1_to_hex(commit->object.sha1));
+		return;
+	case FORMAT_PART_COMMIT_HASH_ABBREV:
+		if (add_again(sb, &c->abbrev_commit_hash))
 			return;
-		case FORMAT_PART_COMMIT_HASH:
-			strbuf_addstr(sb, sha1_to_hex(commit->object.sha1));
+		strbuf_addstr(sb, find_unique_abbrev(commit->object.sha1,
+					     c->pretty_ctx->abbrev));
+		c->abbrev_commit_hash.len = sb->len - c->abbrev_commit_hash.off;
+		return;
+	case FORMAT_PART_PARENT_HASHES:
+		for (p = commit->parents; p; p = p->next) {
+			if (p != commit->parents)
+				strbuf_addch(sb, ' ');
+			strbuf_addstr(sb, sha1_to_hex(p->item->object.sha1));
+		}
+		return;
+	case FORMAT_PART_PARENT_HASHES_ABBREV:
+		if (add_again(sb, &c->abbrev_parent_hashes))
 			return;
-		case FORMAT_PART_COMMIT_HASH_ABBREV:
-			if (add_again(sb, &c->abbrev_commit_hash))
-				return;
-			strbuf_addstr(sb, find_unique_abbrev(commit->object.sha1,
-						     c->pretty_ctx->abbrev));
-			c->abbrev_commit_hash.len = sb->len - c->abbrev_commit_hash.off;
-			return;
-		case FORMAT_PART_PARENT_HASHES:
-			for (p = commit->parents; p; p = p->next) {
-				if (p != commit->parents)
-					strbuf_addch(sb, ' ');
-				strbuf_addstr(sb, sha1_to_hex(p->item->object.sha1));
-			}
-			return;
-		case FORMAT_PART_PARENT_HASHES_ABBREV:
-			if (add_again(sb, &c->abbrev_parent_hashes))
-				return;
-			for (p = commit->parents; p; p = p->next) {
-				if (p != commit->parents)
-					strbuf_addch(sb, ' ');
-				strbuf_addstr(sb, find_unique_abbrev(
-						p->item->object.sha1,
-						c->pretty_ctx->abbrev));
-			}
-			c->abbrev_parent_hashes.len = sb->len -
-						      c->abbrev_parent_hashes.off;
-			return;
-		case FORMAT_PART_CONDITION_MERGE:
-			if (commit->parents->next)
-				format_commit_message_parts(part->parts, sb, context);
-			else if(part->alt_parts)
-				format_commit_message_parts(part->alt_parts, sb, context);
-			return;
-		default:
-			strbuf_addstr(sb, "?");
+		for (p = commit->parents; p; p = p->next) {
+			if (p != commit->parents)
+				strbuf_addch(sb, ' ');
+			strbuf_addstr(sb, find_unique_abbrev(
+					p->item->object.sha1,
+					c->pretty_ctx->abbrev));
+		}
+		c->abbrev_parent_hashes.len = sb->len -
+					      c->abbrev_parent_hashes.off;
+		return;
+	case FORMAT_PART_CONDITION_MERGE:
+		if (commit->parents->next)
+			format_commit_message_parts(part->parts, sb, context);
+		else if(part->alt_parts)
+			format_commit_message_parts(part->alt_parts, sb, context);
+		return;
+	default:
+		break;
 	}
+
+	/* For the rest we have to parse the commit header. */
+	if (!c->commit_header_parsed)
+		parse_commit_header(c);
+
+	switch (part->type) {
+	case FORMAT_PART_AUTHOR_NAME:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (person.buffer)
+			strbuf_add(sb, person.name, person.name_len);
+		return;
+	case FORMAT_PART_AUTHOR_EMAIL:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (person.buffer)
+			strbuf_add(sb, person.email, person.email_len);
+		return;
+	default:
+		strbuf_addstr(sb, "?");
+	}
+
 	return;
 }
 
 void format_commit_message_parts(struct format_parts *parsed, struct strbuf *sb,
 				 void *context)
 {
-	size_t i;
+	size_t i, orig_len;
+	enum format_part_magic magic;
+
 	for (i = 0; i < parsed->len; i++) {
+		orig_len = sb->len;
+		magic = parsed->part[i].magic;
 		format_commit_message_part(&parsed->part[i], sb, context);
+
+		if (magic == NO_MAGIC)
+			continue;
+
+		if ((orig_len == sb->len) && magic == DEL_LF_BEFORE_EMPTY) {
+			while (sb->len && sb->buf[sb->len - 1] == '\n')
+				strbuf_setlen(sb, sb->len - 1);
+		} else if (orig_len != sb->len) {
+			if (magic == ADD_LF_BEFORE_NON_EMPTY)
+				strbuf_insert(sb, orig_len, "\n", 1);
+			else if (magic == ADD_SP_BEFORE_NON_EMPTY)
+				strbuf_insert(sb, orig_len, " ", 1);
+		}
 	}
 }
 
