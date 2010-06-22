@@ -1679,6 +1679,7 @@ void format_commit_message_part(struct format_part *part, struct strbuf *sb,
 {
 	struct format_commit_context *c = context;
 	const struct commit *commit = c->commit;
+	const char *msg = commit->buffer;
 	struct commit_list *p;
 	struct commit_person person = {0};
 	char mm_name[1024], mm_email[1024];
@@ -1697,16 +1698,6 @@ void format_commit_message_part(struct format_part *part, struct strbuf *sb,
 		if (part->argc > 2)
 			indent2 = strtoul(part->argv[2], NULL, 10);
 		rewrap_message_tail(sb, c, width, indent1, indent2);
-		return;
-	case FORMAT_PART_MARK:
-		strbuf_addch(sb, (commit->object.flags & BOUNDARY)
-				 ? '-'
-				 : (commit->object.flags & SYMMETRIC_LEFT)
-				 ? '<'
-				 : '>');
-		return;
-	case FORMAT_PART_DECORATE:
-		format_decoration(sb, commit);
 		return;
 	default:
 		break;
@@ -1756,6 +1747,36 @@ void format_commit_message_part(struct format_part *part, struct strbuf *sb,
 		}
 		c->abbrev_parent_hashes.len = sb->len -
 					      c->abbrev_parent_hashes.off;
+		return;
+	case FORMAT_PART_MARK:
+		strbuf_addch(sb, (commit->object.flags & BOUNDARY)
+				 ? '-'
+				 : (commit->object.flags & SYMMETRIC_LEFT)
+				 ? '<'
+				 : '>');
+		return;
+	case FORMAT_PART_DECORATE:
+		format_decoration(sb, commit);
+		return;
+	case FORMAT_PART_REFLOG_SELECTOR:
+	case FORMAT_PART_REFLOG_SELECTOR_SHORT:
+		if (c->pretty_ctx->reflog_info) {
+			get_reflog_selector(sb,
+					    c->pretty_ctx->reflog_info,
+					    c->pretty_ctx->date_mode,
+					    (part->type == FORMAT_PART_REFLOG_SELECTOR_SHORT));
+		}
+		return;
+	case FORMAT_PART_REFLOG_SUBJECT:
+		if (c->pretty_ctx->reflog_info)
+			get_reflog_message(sb, c->pretty_ctx->reflog_info);
+		return;
+	case FORMAT_PART_NOTES:
+		if (c->pretty_ctx->show_notes) {
+			format_display_notes(commit->object.sha1, sb,
+				    git_log_output_encoding ? git_log_output_encoding
+							    : git_commit_encoding, 0);
+		}
 		return;
 	case FORMAT_PART_CONDITION_MERGE:
 		if (commit->parents->next)
@@ -1812,10 +1833,119 @@ void format_commit_message_part(struct format_part *part, struct strbuf *sb,
 			     mm_name, sizeof(mm_name));
 		strbuf_addstr(sb, mm_email);
 		return;
+	case FORMAT_PART_AUTHOR_DATE:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (!person.buffer)
+			return;
+
+		strbuf_addstr(sb, show_date(person.date, person.tz,
+					    c->pretty_ctx->date_mode));
+		return;
+	case FORMAT_PART_AUTHOR_DATE_RFC2822:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (!person.buffer)
+			return;
+
+		strbuf_addstr(sb, show_date(person.date, person.tz, DATE_RFC2822));
+		return;
+	case FORMAT_PART_AUTHOR_DATE_RELATIVE:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (!person.buffer)
+			return;
+
+		strbuf_addstr(sb, show_date(person.date, person.tz, DATE_RELATIVE));
+		return;
+	case FORMAT_PART_AUTHOR_DATE_UNIX:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (!person.buffer)
+			return;
+
+		strbuf_addf(sb, "%lu", person.date);
+		return;
+	case FORMAT_PART_AUTHOR_DATE_ISO8601:
+		parse_commit_person(&person,
+				    commit->buffer + c->author.off,
+				    c->author.len);
+		if (!person.buffer)
+			return;
+
+		strbuf_addstr(sb, show_date(person.date, person.tz, DATE_ISO8601));
+		return;
+	case FORMAT_PART_COMMITTER_NAME:
+		parse_commit_person(&person,
+				    commit->buffer + c->committer.off,
+				    c->committer.len);
+		if (person.buffer)
+			strbuf_add(sb, person.name, person.name_len);
+		return;
+	case FORMAT_PART_COMMITTER_NAME_MAILMAP:
+		parse_commit_person(&person,
+				    commit->buffer + c->committer.off,
+				    c->committer.len);
+		if (!person.buffer)
+			return;
+
+		strlcpy(mm_name, person.name, person.name_len);
+		strlcpy(mm_email, person.email, person.email_len);
+		mailmap_name(mm_email, sizeof(mm_email),
+			     mm_name, sizeof(mm_name));
+		strbuf_addstr(sb, mm_name);
+		return;
+	case FORMAT_PART_COMMITTER_EMAIL:
+		parse_commit_person(&person,
+				    commit->buffer + c->committer.off,
+				    c->committer.len);
+		if (person.buffer)
+			strbuf_add(sb, person.email, person.email_len);
+		return;
+	case FORMAT_PART_COMMITTER_EMAIL_MAILMAP:
+		parse_commit_person(&person,
+				    commit->buffer + c->committer.off,
+				    c->committer.len);
+		if (!person.buffer)
+			return;
+
+		strlcpy(mm_name, person.name, person.name_len);
+		strlcpy(mm_email, person.email, person.email_len);
+		mailmap_name(mm_email, sizeof(mm_email),
+			     mm_name, sizeof(mm_name));
+		strbuf_addstr(sb, mm_email);
+		return;
+	case FORMAT_PART_ENCODING:
+		strbuf_add(sb, msg + c->encoding.off, c->encoding.len);
+		return;
+	case FORMAT_PART_RAW_BODY:
+		strbuf_addstr(sb, msg + c->message_off + 1);
+		return;
+	default:
+		break;
+	}
+
+	/* Now we need to parse the commit message. */
+	if (!c->commit_message_parsed)
+		parse_commit_message(c);
+
+	switch (part->type) {
+	case FORMAT_PART_SUBJECT:
+		format_subject(sb, msg + c->subject_off, " ");
+		return;
+	case FORMAT_PART_SUBJECT_SANITIZED:
+		format_sanitized_subject(sb, msg + c->subject_off);
+		return;
+	case FORMAT_PART_BODY:
+		strbuf_addstr(sb, msg + c->body_off);
+		return;
 	default:
 		strbuf_addstr(sb, "?");
 	}
-
 	return;
 }
 
