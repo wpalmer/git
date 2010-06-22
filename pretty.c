@@ -190,6 +190,8 @@ static void part_add_narg(struct format_part *part, const char *arg, size_t len)
 	return;
 }
 
+static struct strbuf * parts_debug(struct format_parts *parts, size_t indent);
+
 static struct format_part *parse_extended(const char *unparsed)
 {
 	struct format_part *part = format_part_alloc();
@@ -1704,6 +1706,12 @@ void format_commit_message_part(struct format_part *part, struct strbuf *sb,
 			indent2 = strtoul(part->argv[2], NULL, 10);
 		rewrap_message_tail(sb, c, width, indent1, indent2);
 		return;
+	case FORMAT_PART_CONDITION_OPT_COLOR:
+		if (c->pretty_ctx->use_color)
+			format_commit_message_parts(part->parts, sb, context);
+		else if(part->alt_parts)
+			format_commit_message_parts(part->alt_parts, sb, context);
+		return;
 	default:
 		break;
 	}
@@ -1949,7 +1957,7 @@ void format_commit_message_part(struct format_part *part, struct strbuf *sb,
 		strbuf_addstr(sb, msg + c->body_off);
 		return;
 	default:
-		strbuf_addstr(sb, "?");
+		strbuf_addstr(sb, "(UNKNOWN)");
 	}
 	return;
 }
@@ -2005,6 +2013,9 @@ void format_commit_message(const struct commit *commit,
 printf("FORMAT: %s\n", format);
 
 	parsed = parse(format);
+
+//parts_debug(parsed, 0);
+
 	format_commit_message_parts(parsed, sb, &context);
 
 //	strbuf_expand(sb, format, format_commit_item, &context);
@@ -2252,4 +2263,145 @@ void o_pretty_print_commit(enum cmit_fmt fmt, const struct commit *commit,
 				     NOTES_SHOW_HEADER | NOTES_INDENT);
 
 	free(reencoded);
+}
+
+static struct strbuf * parts_debug(struct format_parts *parts, size_t indent)
+{
+	struct format_part *part;
+	struct strbuf *buf = xcalloc(1, sizeof(*buf));
+	struct strbuf *otherbuf;
+	struct {enum format_part_type type; char *label;} labels[] = {
+			{FORMAT_PART_FORMAT, "FORMAT"},
+			{FORMAT_PART_LITERAL, "LITERAL"},
+			{FORMAT_PART_COMMIT_HASH, "COMMIT_HASH"},
+			{FORMAT_PART_COMMIT_HASH_ABBREV, "COMMIT_HASH_ABBREV"},
+			{FORMAT_PART_PARENT_HASHES, "PARENT_HASHES"},
+			{FORMAT_PART_PARENT_HASHES_ABBREV, "PARENT_HASHES_ABBREV"},
+			{FORMAT_PART_TREE_HASH, "TREE_HASH"},
+			{FORMAT_PART_TREE_HASH_ABBREV, "TREE_HASH_ABBREV"},
+			{FORMAT_PART_AUTHOR_NAME, "AUTHOR_NAME"},
+			{FORMAT_PART_AUTHOR_NAME_MAILMAP, "AUTHOR_NAME_MAILMAP"},
+			{FORMAT_PART_AUTHOR_EMAIL, "AUTHOR_EMAIL"},
+			{FORMAT_PART_AUTHOR_EMAIL_MAILMAP, "AUTHOR_EMAIL_MAILMAP"},
+			{FORMAT_PART_AUTHOR_DATE, "AUTHOR_DATE"},
+			{FORMAT_PART_AUTHOR_DATE_RFC2822, "AUTHOR_DATE_RFC2822"},
+			{FORMAT_PART_AUTHOR_DATE_RELATIVE, "AUTHOR_DATE_RELATIVE"},
+			{FORMAT_PART_AUTHOR_DATE_UNIX, "AUTHOR_DATE_UNIX"},
+			{FORMAT_PART_AUTHOR_DATE_ISO8601, "AUTHOR_DATE_ISO8601"},
+			{FORMAT_PART_COMMITTER_NAME, "COMMITTER_NAME"},
+			{FORMAT_PART_COMMITTER_NAME_MAILMAP, "COMMITTER_NAME_MAILMAP"},
+			{FORMAT_PART_COMMITTER_EMAIL, "COMMITTER_EMAIL"},
+			{FORMAT_PART_COMMITTER_EMAIL_MAILMAP, "COMMITTER_EMAIL_MAILMAP"},
+			{FORMAT_PART_COMMITTER_DATE, "COMMITTER_DATE"},
+			{FORMAT_PART_COMMITTER_DATE_RFC2822, "COMMITTER_DATE_RFC2822"},
+			{FORMAT_PART_COMMITTER_DATE_RELATIVE, "COMMITTER_DATE_RELATIVE"},
+			{FORMAT_PART_COMMITTER_DATE_UNIX, "COMMITTER_DATE_UNIX"},
+			{FORMAT_PART_COMMITTER_DATE_ISO8601, "COMMITTER_DATE_ISO8601"},
+
+			{FORMAT_PART_DECORATE, "DECORATE"},
+			{FORMAT_PART_ENCODING, "ENCODING"},
+			{FORMAT_PART_SUBJECT, "SUBJECT"},
+			{FORMAT_PART_SUBJECT_SANITIZED, "SUBJECT_SANITIZED"},
+			{FORMAT_PART_BODY, "BODY"},
+			{FORMAT_PART_RAW_BODY, "RAW_BODY"},
+			{FORMAT_PART_NOTES, "NOTES"},
+
+			{FORMAT_PART_REFLOG_SELECTOR, "REFLOG_SELECTOR"},
+			{FORMAT_PART_REFLOG_SELECTOR_SHORT, "REFLOG_SELECTOR_SHORT"},
+			{FORMAT_PART_REFLOG_SUBJECT, "REFLOG_SUBJECT"},
+
+			{FORMAT_PART_COLOR, "COLOR"},
+			{FORMAT_PART_MARK, "MARK"},
+			{FORMAT_PART_WRAP, "WRAP"},
+			{FORMAT_PART_CONDITION_MERGE, "CONDITION:MERGE"},
+			{FORMAT_PART_CONDITION_OPT_COLOR, "CONDITION:OPT-COLOR"}
+		};
+	char *label;
+	size_t i,j;
+	strbuf_init(buf, 0);
+
+	strbuf_add_wrapped_text(buf, "{[PARTS:", indent++, 0, 0);
+	strbuf_addf(buf, "%li]\n", parts->len);
+	for (i = 0; i < parts->len; i++) {
+		part = &parts->part[i];
+		label = "UNKNOWN";
+		for (j = 0; j < ARRAY_SIZE(labels); j++) {
+			if (labels[j].type == part->type) {
+				label = labels[j].label;
+			}
+		}
+
+		strbuf_add_wrapped_text(buf, "{", indent, 0, 0);
+		strbuf_addstr(buf, label);
+
+		switch(part->magic){
+			case NO_MAGIC:
+				break;
+			case ADD_LF_BEFORE_NON_EMPTY:
+				strbuf_addstr(buf, " (ADD_LF_BEFORE_NON_EMPTY)");
+				break;
+			case DEL_LF_BEFORE_EMPTY:
+				strbuf_addstr(buf, " (DEL_LF_BEFORE_EMPTY)");
+				break;
+			case ADD_SP_BEFORE_NON_EMPTY:
+				strbuf_addstr(buf, " (ADD_SP_BEFORE_NON_EMPTY)");
+				break;
+		}
+
+		if (part->literal) {
+			strbuf_addstr(buf, " ");
+			strbuf_add_wrapped_text(buf, part->literal,
+						0, indent+strlen(label)+1, 0);
+		}
+
+		if (part->argc) {
+			strbuf_addstr(buf, "\n");
+			strbuf_add_wrapped_text(buf, "ARGS: [", indent+1, 0, 0);
+			for (j = 0; j < part->argc; j++) {
+				strbuf_add_wrapped_text(buf, part->argv[j],
+							0, indent+8, 0);
+
+				if (j < part->argc - 1)
+					strbuf_addstr(buf, ", ");
+			}
+			strbuf_addstr(buf, "]\n");
+		}
+
+		if (part->parts) {
+			strbuf_addstr(buf, "\n");
+			strbuf_add_wrapped_text(buf, "? \n",
+						indent+1, 0, 0);
+
+			otherbuf = parts_debug(part->parts, indent+3);
+			strbuf_addbuf(buf, otherbuf);
+			strbuf_release(otherbuf);
+			free(otherbuf);
+		}
+
+		if (part->alt_parts) {
+			if (!part->alt_parts)
+				strbuf_addstr(buf, "\n");
+			strbuf_add_wrapped_text(buf, ": \n",
+						indent+1, 0, 0);
+
+			otherbuf = parts_debug(part->alt_parts, indent+3);
+			strbuf_addbuf(buf, otherbuf);
+			strbuf_release(otherbuf);
+			free(otherbuf);
+		}
+
+		if (part->argc || part->parts || part->alt_parts)
+			strbuf_add_wrapped_text(buf, "}\n", indent, 0, 0);
+		else
+			strbuf_addstr(buf, "}\n");
+	}
+	strbuf_add_wrapped_text(buf, "}\n", --indent, 0, 0);
+
+	if( !indent ){
+		printf("%s", buf->buf);
+		strbuf_release(buf);
+		free(buf);
+		return NULL;
+	}
+	return buf;
 }

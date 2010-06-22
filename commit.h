@@ -90,6 +90,7 @@ struct pretty_print_context
 	enum date_mode date_mode;
 	int need_8bit_cte;
 	int show_notes;
+	int use_color;
 	struct reflog_walk_info *reflog_info;
 	const char *output_encoding;
 };

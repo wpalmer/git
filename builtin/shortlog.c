@@ -136,13 +136,14 @@ static void read_from_stdin(struct shortlog *log)
 	}
 }
 
-void shortlog_add_commit(struct shortlog *log, struct commit *commit)
+void shortlog_add_commit(struct shortlog *log, struct commit *commit, struct rev_info *rev)
 {
 	const char *author = NULL, *buffer;
 	struct strbuf buf = STRBUF_INIT;
 	struct strbuf ufbuf = STRBUF_INIT;
 	struct pretty_print_context ctx = {0};
 
+	ctx.use_color = DIFF_OPT_TST(&rev->diffopt, COLOR_DIFF);
 	pretty_print_commit(CMIT_FMT_RAW, commit, &buf, &ctx);
 	buffer = buf.buf;
 	while (*buffer && *buffer != '\n') {
@@ -183,7 +184,7 @@ static void get_from_rev(struct rev_info *rev, struct shortlog *log)
 	if (prepare_revision_walk(rev))
 		die("revision walk setup failed");
 	while ((commit = get_revision(rev)) != NULL)
-		shortlog_add_commit(log, commit);
+		shortlog_add_commit(log, commit, rev);
 }
 
 static int parse_uint(char const **arg, int comma, int defval)
