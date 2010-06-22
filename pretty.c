@@ -70,6 +70,7 @@ enum format_part_type {
 	FORMAT_PART_MARK,
 	FORMAT_PART_WRAP,
 
+	FORMAT_PART_CONDITION_OPT_COLOR,
 	FORMAT_PART_CONDITION_MERGE
 };
 
@@ -205,6 +206,10 @@ static struct format_part *parse_extended(const char *unparsed)
 		part->type = FORMAT_PART_CONDITION_MERGE;
 		condition = 1;
 		c += 5;
+	} else if (!prefixcmp(c, "opt-color")) {
+		part->type = FORMAT_PART_CONDITION_OPT_COLOR;
+		condition = 1;
+		c += 9;
 	} else {
 		part->type = FORMAT_PART_FORMAT;
 		state.expect_paren = 1;
