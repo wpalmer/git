@@ -1642,51 +1642,6 @@ static size_t format_commit_one(struct strbuf *sb, const char *placeholder,
 	return 0;	/* unknown placeholder */
 }
 
-static size_t format_commit_item(struct strbuf *sb, const char *placeholder,
-				 void *context)
-{
-	int consumed;
-	size_t orig_len;
-	enum {
-		NO_MAGIC,
-		ADD_LF_BEFORE_NON_EMPTY,
-		DEL_LF_BEFORE_EMPTY,
-		ADD_SP_BEFORE_NON_EMPTY
-	} magic = NO_MAGIC;
-
-	switch (placeholder[0]) {
-	case '-':
-		magic = DEL_LF_BEFORE_EMPTY;
-		break;
-	case '+':
-		magic = ADD_LF_BEFORE_NON_EMPTY;
-		break;
-	case ' ':
-		magic = ADD_SP_BEFORE_NON_EMPTY;
-		break;
-	default:
-		break;
-	}
-	if (magic != NO_MAGIC)
-		placeholder++;
-
-	orig_len = sb->len;
-	consumed = format_commit_one(sb, placeholder, context);
-	if (magic == NO_MAGIC)
-		return consumed;
-
-	if ((orig_len == sb->len) && magic == DEL_LF_BEFORE_EMPTY) {
-		while (sb->len && sb->buf[sb->len - 1] == '\n')
-			strbuf_setlen(sb, sb->len - 1);
-	} else if (orig_len != sb->len) {
-		if (magic == ADD_LF_BEFORE_NON_EMPTY)
-			strbuf_insert(sb, orig_len, "\n", 1);
-		else if (magic == ADD_SP_BEFORE_NON_EMPTY)
-			strbuf_insert(sb, orig_len, " ", 1);
-	}
-	return consumed + 1;
-}
-
 static size_t userformat_want_item(struct strbuf *sb, const char *placeholder,
 				   void *context)
 {
@@ -1727,11 +1682,31 @@ void format_commit_message_part(struct format_part *part, struct strbuf *sb,
 	struct commit_list *p;
 	struct commit_person person = {0};
 	char mm_name[1024], mm_email[1024];
+	unsigned long width = 0, indent1 = 0, indent2 = 0;
 
 	/* these are independent of the commit */
 	switch (part->type) {
 	case FORMAT_PART_LITERAL:
 		strbuf_add(sb, part->literal, part->literal_len);
+		return;
+	case FORMAT_PART_WRAP:
+		if (part->argc > 0)
+			width = strtoul(part->argv[0], NULL, 10);
+		if (part->argc > 1)
+			indent1 = strtoul(part->argv[1], NULL, 10);
+		if (part->argc > 2)
+			indent2 = strtoul(part->argv[2], NULL, 10);
+		rewrap_message_tail(sb, c, width, indent1, indent2);
+		return;
+	case FORMAT_PART_MARK:
+		strbuf_addch(sb, (commit->object.flags & BOUNDARY)
+				 ? '-'
+				 : (commit->object.flags & SYMMETRIC_LEFT)
+				 ? '<'
+				 : '>');
+		return;
+	case FORMAT_PART_DECORATE:
+		format_decoration(sb, commit);
 		return;
 	default:
 		break;
@@ -1751,6 +1726,16 @@ void format_commit_message_part(struct format_part *part, struct strbuf *sb,
 		strbuf_addstr(sb, find_unique_abbrev(commit->object.sha1,
 					     c->pretty_ctx->abbrev));
 		c->abbrev_commit_hash.len = sb->len - c->abbrev_commit_hash.off;
+		return;
+	case FORMAT_PART_TREE_HASH:
+		strbuf_addstr(sb, sha1_to_hex(commit->tree->object.sha1));
+		return;
+	case FORMAT_PART_TREE_HASH_ABBREV:
+		if (add_again(sb, &c->abbrev_tree_hash))
+			return;
+		strbuf_addstr(sb, find_unique_abbrev(commit->tree->object.sha1,
+						     c->pretty_ctx->abbrev));
+		c->abbrev_tree_hash.len = sb->len - c->abbrev_tree_hash.off;
 		return;
 	case FORMAT_PART_PARENT_HASHES:
 		for (p = commit->parents; p; p = p->next) {
