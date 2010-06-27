@@ -20,9 +20,10 @@
 #include "parse-options.h"
 #include "unpack-trees.h"
 #include "cache-tree.h"
+#include "revision.h"
 
 static const char * const git_reset_usage[] = {
-	"git reset [--mixed | --soft | --hard | --merge | --keep] [-q] [<commit>]",
+	"git reset [--mixed | --soft | --hard | --merge | --keep] [-g] [-q] [<commit>]",
 	"git reset [-q] <commit> [--] <paths>...",
 	"git reset --patch [<commit>] [--] [<paths>...]",
 	NULL
@@ -236,7 +237,7 @@ static void die_if_unmerged_cache(int reset_type)
 int cmd_reset(int argc, const char **argv, const char *prefix)
 {
 	int i = 0, reset_type = NONE, update_ref_status = 0, quiet = 0;
-	int patch_mode = 0;
+	int gentle = 0, patch_mode = 0;
 	const char *rev = "HEAD";
 	unsigned char sha1[20], *orig = NULL, sha1_orig[20],
 				*old_orig = NULL, sha1_old_orig[20];
@@ -253,6 +254,7 @@ int cmd_reset(int argc, const char **argv, const char *prefix)
 				"reset HEAD, index and working tree", MERGE),
 		OPT_SET_INT(0, "keep", &reset_type,
 				"reset HEAD but keep local changes", KEEP),
+		OPT_BOOLEAN('g', "gentle", &gentle, "fail if index or work-tree are dirty"),
 		OPT_BOOLEAN('p', "patch", &patch_mode, "select hunks interactively"),
 		OPT_END()
 	};
@@ -334,6 +336,40 @@ int cmd_reset(int argc, const char **argv, const char *prefix)
 	if (reset_type == MIXED && is_bare_repository())
 		die("%s reset is not allowed in a bare repository",
 		    reset_type_names[reset_type]);
+
+
+	if (gentle) {
+		struct rev_info revs;
+		unsigned char sha1[20];
+		struct object *object;
+		unsigned mode;
+
+		init_revisions(&revs, prefix);
+		if (get_sha1_with_mode("HEAD", sha1, &mode))
+			die("bad revision HEAD");
+
+		object = parse_object(sha1);
+		if (!object)
+			die("bad object HEAD");
+
+		add_object_array_with_mode(object, "HEAD", &revs.pending, mode);
+
+		DIFF_OPT_SET(&revs.diffopt, QUICK);
+
+		run_diff_index(&revs, 1);
+		if (DIFF_OPT_TST(&revs.diffopt, HAS_CHANGES)) {
+			die("reset with --gentle failed: "
+			    "uncommitted changes in index");
+		}
+
+		if (reset_type != SOFT && reset_type != MIXED) {
+			run_diff_index(&revs, 0);
+			if (DIFF_OPT_TST(&revs.diffopt, HAS_CHANGES)) {
+				die("reset with --gentle failed: "
+				    "uncommitted changes in work-tree");
+			}
+		}
+	}
 
 	/* Soft reset does not touch the index file nor the working tree
 	 * at all, but requires them in a good order.  Other resets reset
