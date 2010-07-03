@@ -340,15 +340,22 @@ int cmd_reset(int argc, const char **argv, const char *prefix)
 
 	if (gentle) {
 		struct rev_info revs;
-		unsigned char sha1[20];
+		unsigned char head_sha1[20];
 		struct object *object;
 		unsigned mode;
+		int ret;
 
 		init_revisions(&revs, prefix);
-		if (get_sha1_with_mode("HEAD", sha1, &mode))
+		if (get_sha1_with_mode("HEAD", head_sha1, &mode))
 			die("bad revision HEAD");
 
-		object = parse_object(sha1);
+		printf("SHA1x: ");
+		for( ret = 0; ret < 20; ret++ ){
+			printf("%x", head_sha1[ret]);
+		}
+		printf("\n");
+
+		object = parse_object(head_sha1);
 		if (!object)
 			die("bad object HEAD");
 

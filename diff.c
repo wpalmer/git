@@ -4070,26 +4070,43 @@ void diffcore_std(struct diff_options *options)
 	/* We never run this function more than one time, because the
 	 * rename/copy detection logic can only run once.
 	 */
+		printf("DIFF: %u\n", __LINE__);
 	if (diff_queued_diff.run)
 		return;
 
-	if (options->skip_stat_unmatch)
+	if (options->skip_stat_unmatch) {
+		printf("DIFF: %u\n", __LINE__);
 		diffcore_skip_stat_unmatch(options);
-	if (options->break_opt != -1)
+	}
+	if (options->break_opt != -1) {
+		printf("DIFF: %u\n", __LINE__);
 		diffcore_break(options->break_opt);
-	if (options->detect_rename)
+	}
+	if (options->detect_rename) {
+		printf("DIFF: %u\n", __LINE__);
 		diffcore_rename(options);
-	if (options->break_opt != -1)
+	}
+	if (options->break_opt != -1) {
+		printf("DIFF: %u\n", __LINE__);
 		diffcore_merge_broken();
-	if (options->pickaxe)
+	}
+	if (options->pickaxe) {
+		printf("DIFF: %u\n", __LINE__);
 		diffcore_pickaxe(options->pickaxe, options->pickaxe_opts);
-	if (options->orderfile)
+	}
+	if (options->orderfile) {
+		printf("DIFF: %u\n", __LINE__);
 		diffcore_order(options->orderfile);
+	}
+		printf("DIFF: %u\n", __LINE__);
 	diff_resolve_rename_copy();
+		printf("DIFF: %u\n", __LINE__);
 	diffcore_apply_filter(options->filter);
 
-	if (diff_queued_diff.nr && !DIFF_OPT_TST(options, DIFF_FROM_CONTENTS))
+	if (diff_queued_diff.nr && !DIFF_OPT_TST(options, DIFF_FROM_CONTENTS)) {
+		printf("HAS CHANGES\n");
 		DIFF_OPT_SET(options, HAS_CHANGES);
+	}
 	else
 		DIFF_OPT_CLR(options, HAS_CHANGES);
 
