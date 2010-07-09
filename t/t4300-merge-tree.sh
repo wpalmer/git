@@ -25,7 +25,7 @@ EXPECTED
 	test_cmp expected actual
 '
 
-test_expect_failure 'file add !A, B' '
+test_expect_success 'file add !A, B' '
 	cat >expected <<EXPECTED
 added in local
   our    100644 43d5a8ed6ef6c00ff775008633f95787d088285d ONE
@@ -210,7 +210,7 @@ EXPECTED
 	test_cmp expected actual
 '
 
-test_expect_failure 'file remove !A, B' '
+test_expect_success 'file remove !A, B' '
 	cat >expected <<EXPECTED
 removed in remote
   base   100644 43d5a8ed6ef6c00ff775008633f95787d088285d ONE
@@ -230,7 +230,7 @@ EXPECTED
 	test_cmp expected actual
 '
 
-test_expect_failure 'file change A, remove B' '
+test_expect_success 'file change A, remove B' '
 	cat >expected <<EXPECTED
 removed in remote
   base   100644 43d5a8ed6ef6c00ff775008633f95787d088285d ONE
