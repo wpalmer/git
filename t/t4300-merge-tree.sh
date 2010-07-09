@@ -30,7 +30,7 @@ test_expect_success 'both added conflict' '
 	git merge-tree initial diff-A diff-B
 '
 
-test_expect_failure 'nothing similar' '
+test_expect_success 'nothing similar' '
 	git reset --hard initial
 	test_commit "no-common-A" "ONE" "AAA" 
 
