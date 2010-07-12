@@ -15,6 +15,7 @@ enum parse_opt_type {
 	OPTION_SET_PTR,
 	/* options with arguments (usually) */
 	OPTION_STRING,
+	OPTION_STRING_MULTIPLE,
 	OPTION_INTEGER,
 	OPTION_CALLBACK,
 	OPTION_FILENAME
@@ -108,6 +109,12 @@ struct option {
 	intptr_t defval;
 };
 
+struct option_strings {
+	size_t num;
+	size_t alloc;
+	const char **values;
+};
+
 #define OPT_END()                   { OPTION_END }
 #define OPT_ARGUMENT(l, h)          { OPTION_ARGUMENT, 0, (l), NULL, NULL, \
 				      (h), PARSE_OPT_NOARG}
@@ -124,6 +131,8 @@ struct option {
 				      (h), PARSE_OPT_NOARG, NULL, (p) }
 #define OPT_INTEGER(s, l, v, h)     { OPTION_INTEGER, (s), (l), (v), "n", (h) }
 #define OPT_STRING(s, l, v, a, h)   { OPTION_STRING,  (s), (l), (v), (a), (h) }
+#define OPT_STRING_MULTIPLE(s, l, v, a, h)   { OPTION_STRING_MULTIPLE,  (s), \
+					       (l), (v), (a), (h) }
 #define OPT_UYN(s, l, v, h)         { OPTION_CALLBACK, (s), (l), (v), NULL, \
 				      (h), PARSE_OPT_NOARG, &parse_opt_tertiary }
 #define OPT_DATE(s, l, v, h) \

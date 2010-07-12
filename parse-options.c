@@ -109,6 +109,20 @@ static int get_value(struct parse_opt_ctx_t *p,
 			return get_arg(p, opt, flags, (const char **)opt->value);
 		return 0;
 
+	case OPTION_STRING_MULTIPLE:
+		if (unset)
+			((option_strings *)opt->value)->num = 0;
+		else {
+			struct option_strings *strings = ((option_strings *)opt->value);
+			ALLOC_GROW(strings->values, strings->num+1, strings->alloc);
+
+			if (opt->flags & PARSE_OPT_OPTARG && !p->opt) {
+				strings->values[strings->num++] = (const char *)opt->defval;
+			else
+				return get_arg(p, opt, flags, &strings->values[strings->num++]);
+		}
+		return 0;
+
 	case OPTION_FILENAME:
 		err = 0;
 		if (unset)

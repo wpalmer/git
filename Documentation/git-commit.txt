@@ -121,6 +121,24 @@ OPTIONS
 	Add Signed-off-by line by the committer at the end of the commit
 	log message.
 
+-S<statement>::
+--sign=<statement>[:<parameter>]::
+	Add signing statement. The optional :<parameter> specifies the
+	name and e-mail address to attribute the statement to,
+	following --author semantics. If not specified, the parameter
+	defaults to the committer.
+
+	There are several common signing statements which are built in:
+
+	STATEMENT	Adds to the commit message
+	-------------------------------------------
+	signoff		Signed-off-by:
+	ack		Acked-by:
+	cc		CC:
+
+	In addition, statements may be specified based on the
+	configuration variables `commit.signoff.<statement>`
+
 -n::
 --no-verify::
 	This option bypasses the pre-commit and commit-msg hooks.

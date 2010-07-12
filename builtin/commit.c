@@ -73,6 +73,16 @@ static int all, edit_flag, also, interactive, only, amend, signoff;
 static int quiet, verbose, no_verify, allow_empty, dry_run, renew_authorship;
 static int no_post_rewrite, allow_empty_message;
 static char *untracked_files_arg, *force_date, *ignore_submodule_arg;
+static option_strings statements = {0};
+
+static struct statement_map {
+	const char *name;
+	const char *format;
+} *statement_types = NULL;
+static size_t statement_types_len = 0;
+static size_t statement_types_alloc = 0;
+
+
 /*
  * The default commit message cleanup mode will remove the lines
  * beginning with # (shell comments) and leading and trailing
@@ -124,7 +134,8 @@ static struct option builtin_commit_options[] = {
 	OPT_STRING('c', "reedit-message", &edit_message, "COMMIT", "reuse and edit message from specified commit"),
 	OPT_STRING('C', "reuse-message", &use_message, "COMMIT", "reuse message from specified commit"),
 	OPT_BOOLEAN(0, "reset-author", &renew_authorship, "the commit is authored by me now (used with -C-c/--amend)"),
-	OPT_BOOLEAN('s', "signoff", &signoff, "add Signed-off-by:"),
+	OPT_BOOLEAN('s', NULL, &signoff, "add Signed-off-by:"),
+	{ OPTION_STRING_MULTIPLE, 'S', "signoff", &statements, "statement", "add signing statement: signoff, ack, cc, etc.. (Default: signoff)", PARSE_OPT_OPTARG, NULL, (intptr_t)"signoff" },
 	OPT_FILENAME('t', "template", &template_file, "use specified template file"),
 	OPT_BOOLEAN('e', "edit", &edit_flag, "force edit of commit"),
 	OPT_STRING(0, "cleanup", &cleanup_arg, "default", "how to strip spaces and #comments from message"),
@@ -452,8 +463,6 @@ static int is_a_merge(const unsigned char *sha1)
 	return !!(commit->parents && commit->parents->next);
 }
 
-static const char sign_off_header[] = "Signed-off-by: ";
-
 static void determine_author_info(void)
 {
 	char *name, *email, *date;
@@ -609,22 +618,39 @@ static int prepare_to_commit(const char *index_file, const char *prefix,
 	if (cleanup_mode != CLEANUP_NONE)
 		stripspace(&sb, 0);
 
-	if (signoff) {
+	if (statements->num) {
 		struct strbuf sob = STRBUF_INIT;
-		int i;
+		int i, j;
 
-		strbuf_addstr(&sob, sign_off_header);
-		strbuf_addstr(&sob, fmt_name(getenv("GIT_COMMITTER_NAME"),
-					     getenv("GIT_COMMITTER_EMAIL")));
-		strbuf_addch(&sob, '\n');
-		for (i = sb.len - 1; i > 0 && sb.buf[i - 1] != '\n'; i--)
-			; /* do nothing */
-		if (prefixcmp(sb.buf + i, sob.buf)) {
-			if (!i || !ends_rfc2822_footer(&sb))
-				strbuf_addch(&sb, '\n');
-			strbuf_addbuf(&sb, &sob);
+		for (i = 0; i < statements->num; i++) {
+			statement_map *found = NULL;
+			size_t found_match_len = 0;
+
+			for (j = 0; j < statement_types_len; j++) {
+				size_t match_len;
+
+				if (prefixcmp(statement_types[j].name, statements->values[i]))
+					continue;
+
+				match_len = strlen(statements->values[i]);
+				if (found == NULL || found_match_len > match_len) {
+				found = &statement_types[j];
+				found_match_len = match_len;
+			}
+
+			strbuf_addstr(&sob, found->format);
+			strbuf_addstr(&sob, fmt_name(getenv("GIT_COMMITTER_NAME"),
+						     getenv("GIT_COMMITTER_EMAIL")));
+			strbuf_addch(&sob, '\n');
+			for (j = sb.len - 1; j > 0 && sb.buf[j - 1] != '\n'; j--)
+				; /* do nothing */
+			if (prefixcmp(sb.buf + i, sob.buf)) {
+				if (!j || !ends_rfc2822_footer(&sb))
+					strbuf_addch(&sb, '\n');
+				strbuf_addbuf(&sb, &sob);
+			}
+			strbuf_release(&sob);
 		}
-		strbuf_release(&sob);
 	}
 
 	if (fwrite(sb.buf, 1, sb.len, fp) < sb.len)
@@ -927,6 +953,25 @@ static int parse_and_validate_options(int argc, const char *argv[],
 		if (enc != utf8)
 			free(enc);
 	}
+	if (signoff) {
+		ALLOC_GROW(statements->values, statements->num+1, statements->alloc);
+		statements->values[statements->num++] = "signoff";
+	}
+
+	if (statements->num) {
+		size_t i, j;
+		for (i = 0; i < statements->num; i++) {
+			int found = 0;
+			for (j = 0; j < statement_types_num; j++) {
+				if (!prefixcmp(statement_types[j].name, statements->values[i])) {
+					found = 1;
+					break;
+				}
+			}
+			if (!found)
+				die("Unknown signing-statement `%s'", statements->values[i]);
+		}
+	}
 
 	if (!!also + !!only + !!all + !!interactive > 1)
 		die("Only one of --include/--only/--all/--interactive can be used.");
@@ -1192,11 +1237,37 @@ static int git_commit_config(const char *k, const char *v, void *cb)
 {
 	struct wt_status *s = cb;
 
+	if (!statement_types) {
+		struct statement_map builtin_statements[] = {
+			{ "signoff", "Signed-off-by" },
+			{ "ack", "Acked-by" },
+			{ "cc", "CC" }
+		};
+
+		statement_types_len = ARRAY_SIZE(builtin_formats);
+		ALLOC_GROW(statement_types, statement_types_len, statement_types_alloc);
+		memcpy(statement_types, builtin_statements,
+		       sizeof(*builtin_statements)*ARRAY_SIZE(builtin_statements));
+	}
+
 	if (!strcmp(k, "commit.template"))
 		return git_config_pathname(&template_file, k, v);
 	if (!strcmp(k, "commit.status")) {
 		include_status = git_config_bool(k, v);
 		return 0;
+	}
+	if (!prefixcmp(k, "commit.signoff.")) {
+		const char *name = k + 14;
+		size_t i;
+
+		for (i = 0; i < statement_types_len; i++) {
+			if (!strcmp(statement_types[i].name, name))
+				return 0;
+		}
+
+		ALLOC_GROW(statement_types, statement_types_len+1, statement_types_alloc);
+		statement_types[statement_types_len].name = name;
+		statement_types[statement_types_len].format = v;
 	}
 
 	return git_status_config(k, v, s);
