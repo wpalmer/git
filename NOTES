@@ -1,0 +1,170 @@
+git-remote-svn Revision Mapping
+
+Our goal is to create a bidirectional 1:1 map of git commits to svn revisions.
+Ideally, this should allow us to use an "svn" repository as if it were a git
+repository in terms of the "push" and "fetch" operations. This includes the
+preservation of all aspects of the "original" commit object, including:
+	- Committer Name (and email)
+	- Author Name (and email)
+	- Commit-time
+	- Authorship-time
+	- Commit message
+	- (of course) commit diff
+
+These features can all be considered to be commit meta-data, and so if nothing
+else can be mapped into the commit message. It may be possible to map extra
+features into SVN Revprops, to allow commit messages to remain readable.
+
+Git's object model is not feature-rich. Instead, git's object model is simple,
+allowing for feature-rich tools and interfaces into that model. Because of this,
+there are few features in git which we cannot store in other SCMs. However,
+there are some features which have no direct translation into SVN's model:
+	- Branches are strictly anonymous. While it is possible that we may be
+	  able to derive some refnames after-the-fact, many merges arise from
+	  situations for which there is no ref/branch name, notably the implicit
+	  merge in "git pull", in which often a commit with the /same/ ref name
+	  is merged in.
+
+SVN's model, however, is very complex. Even the simplest of SVN's histories are
+often more complicated than anything git can produce. (git considers this to be
+one of git's features). Many features will likely be ignored entirely by git
+when creating a mapping between revisions and commits:
+	- it is not considered a sin in SVN to mark a path as having been merged
+	  when it hasn't been, and all you really want is to not ever merge the
+	  path accidentally.
+	- The history of individual files is preserved. Rather than the history
+	  of files being strictly as linear (or not) as the commits they are
+	  involved in, a directory in a single revision may contain files which
+	  link back to any number of previous revisions.
+	- svn's branches may include only a subtree of the whole commit. It may
+	  in fact contain several subtrees, while excluding others. This has an
+	  obvious translation in git terms, but is very unlike any git workflow,
+	  and it would be difficult to merge such branches in git.
+	- a branch may be created "empty", then have relevant files copied into
+	  it. It is likely that this sort of thing would be detected
+	  heuristically as a new line of history.
+	- as a combination of these last three: A branch may be constructed
+	  peice-by-peice prior to being considered the "starting point". For
+	  example, a branch may be created empty in one revision via
+	  "svn mkdir", then in the next revision subtreeA is copied in, and
+	  finally subtreeB is copied in. It is only at the point of subtreeB
+	  having been copied that the branch is considered to be created.
+
+
+Revisions, Paths, Commits, and Refs.
+SVN has two core concepts: Revisions and Paths.
+	Revision: a snapshot of the state of all files across all branches at a
+	given point in time. Revisions are note tied to history, though at a
+	given revision, one can see the "last changed revision" of any file, and
+	can walk the history of that file by checking the last-changed-revision-
+	minus-one of that file.
+
+	Path: a versioned file or directory. Contains information regarding the
+	"last changed revision", as well as information regarding where it was
+	copied from, at the revision in which the copy occurred. By convention
+	and design, any "copy" is a branch, which can later be merged into its
+	original. Usually this involves the copying of entire subtrees.
+
+Git has two related concepts: Commits and Refs.
+	Commit: Analogous to an SVN Revision, it describes the state of all
+	files on a single branch at a given point in history. Because it only
+	describes a single branch, it is also related to an SVN Path. Commits,
+	however, have no human-readable names.
+
+	Ref: A human-readable name for a commit, which moves during development.
+	This is analogous to an SVN Path.
+
+Translation between subversion copies and git refs is the tricky part. Some
+assumptions which may or may not be true in terms of heuristics are listed
+below. These are simply "the assumptions which might be made", rather than
+"the assumptions that we make". It is intended that we will work out arguments
+for and against the validity of these assumptions.
+
+	- Only a single svn branch will ever be operated on at a time
+	- svn "copy" metadata is a useful indication of branch relationships
+	- whatever format is used, it must be editable by humans in some way,
+	  since we will never take care of everything with heuristics
+	- branch commits will not always be anywhere near each-other on the DAG
+
+We store multiple commit objects per svn revision:
+	1) The "svn repository state" commit, which is the one which maps
+	   most-directly to an svn revision. It is also the most
+	   straightforward to generate. This commit is used as the basis for
+	   others, in the git-like "store state information first, work out
+	   meaning later" way
+	2) (usually) one "branch commit", the commit which goes in a usable
+	   ref. This may not always be the case, as some commits are not useful
+	   to any ref. (best example: "standard repository layout" commit)
+	3) potentially more branch commits, as branch-spanning changes do
+	   rarely occur.
+
+When we encounter a commit, we ask "which ref is this relevant to?"
+If it touches files under a ref's defined path, we must create a commit for it.
+
+However, some svn branches have complications: If a branch is only of a partial
+tree, we need to pull in the remainder of the tree from somewhere, in order to
+create a new tree-object which previously had no representation
+
+(or do we? subtree-merge is a perfectly acceptable strategy, why invent history
+that isn't there? If someone takes subproject/ out on their own, we should NOT
+pretend it was associated with subprojectB/ the whole time. It very well could
+have been developed against subprojectB@ANCIENT, and that's why it was made
+into a subtree-branch. blame can still follow the history just fine, and any
+trouble git log --stat has should be treated as a bug in that)
+
+	eg:
+		TRUNK:
+			foo-one/
+				bar-two
+				bar-two
+			foo-two/
+				bar-A
+				bar-B
+
+		BRANCH:
+			foo-two/
+				bar-A
+				bar-B
+
+	For this we need to reconstruct the parent and foo-one trees, by
+	presuming that they are pegged at the state they were at the time of
+	copy.
+
+	But a copy from where?
+		- if copy meta-data can be trusted, that question is easy 
+		  to answer.
+			- or is it? is copy meta-data stored as "copied from
+			  @time-of-copy", or "copied from @time-of-last-change"
+			  ?
+		- if copy meta-data cannot be trusted, the question becomes 
+			- Is this an exact copy? In this case, we may be able
+			  to easily determine the source revision and
+			  associated commit
+			  	Q: Why would it not be an exact copy?
+				A: svn cp . url+to://repo/somebranch
+			- Otherwise, fall back to guesses, or just fail?
+				- some things need to be specified by a human,
+				  but how and when do we fail? How do we inform
+				  the user of dodgy heuristics?
+
+
+The SVN Revision Number is a handy statistic, but isn't essential information.
+Can we do without it?
+
+Human Editable Revision->Ref / Ref->Path Map:
+	path/in/svn/including/subdirs@REVISION:RANGE
+		ref/in/git
+
+If we had this sort of revision map, human-specified, would that fit all cases?
+
+
+The trouble with subtrees:
+	how do we ignore the removal of everything else? It really only works
+	if we build a fake history of everything leading up to the subtree
+	branch.
+
+	How do subtree projects usually handle it?
+		Well I know how I'd handle it: edit in the subtree and merge
+		those changes back in.
+		But that's shit. That's working around the tool, instead of
+		making the tool work for you.
