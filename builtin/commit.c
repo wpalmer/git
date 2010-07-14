@@ -73,7 +73,7 @@ static int all, edit_flag, also, interactive, only, amend, signoff;
 static int quiet, verbose, no_verify, allow_empty, dry_run, renew_authorship;
 static int no_post_rewrite, allow_empty_message;
 static char *untracked_files_arg, *force_date, *ignore_submodule_arg;
-static option_strings statements = {0};
+static struct option_strings statements = {0};
 
 static struct statement_map {
 	const char *name;
@@ -618,24 +618,25 @@ static int prepare_to_commit(const char *index_file, const char *prefix,
 	if (cleanup_mode != CLEANUP_NONE)
 		stripspace(&sb, 0);
 
-	if (statements->num) {
+	if (statements.num) {
 		struct strbuf sob = STRBUF_INIT;
 		int i, j;
 
-		for (i = 0; i < statements->num; i++) {
-			statement_map *found = NULL;
+		for (i = 0; i < statements.num; i++) {
+			struct statement_map *found = NULL;
 			size_t found_match_len = 0;
 
 			for (j = 0; j < statement_types_len; j++) {
 				size_t match_len;
 
-				if (prefixcmp(statement_types[j].name, statements->values[i]))
+				if (prefixcmp(statement_types[j].name, statements.values[i]))
 					continue;
 
-				match_len = strlen(statements->values[i]);
+				match_len = strlen(statements.values[i]);
 				if (found == NULL || found_match_len > match_len) {
-				found = &statement_types[j];
-				found_match_len = match_len;
+					found = &statement_types[j];
+					found_match_len = match_len;
+				}
 			}
 
 			strbuf_addstr(&sob, found->format);
@@ -791,7 +792,8 @@ static int message_is_empty(struct strbuf *sb)
 {
 	struct strbuf tmpl = STRBUF_INIT;
 	const char *nl;
-	int eol, i, start = 0;
+	int eol, i, j, start = 0;
+	size_t format_len;
 
 	if (cleanup_mode == CLEANUP_NONE && sb->len)
 		return 0;
@@ -813,14 +815,22 @@ static int message_is_empty(struct strbuf *sb)
 		else
 			eol = sb->len;
 
-		if (strlen(sign_off_header) <= eol - i &&
-		    !prefixcmp(sb->buf + i, sign_off_header)) {
-			i = eol;
-			continue;
+		for (j = 0; j < statement_types_len; j++) {
+			format_len = strlen(statement_types[j].format);
+			if (format_len <= eol - i &&
+			    !prefixcmp(sb->buf + i, statement_types[j].format) &&
+			    !prefixcmp(sb->buf + i + format_len, ": ")
+			) {
+				goto next_line;
+			}
 		}
+
 		while (i < eol)
 			if (!isspace(sb->buf[i++]))
 				return 0;
+		continue;
+next_line:
+		i = eol;
 	}
 
 	return 1;
@@ -954,22 +964,22 @@ static int parse_and_validate_options(int argc, const char *argv[],
 			free(enc);
 	}
 	if (signoff) {
-		ALLOC_GROW(statements->values, statements->num+1, statements->alloc);
-		statements->values[statements->num++] = "signoff";
+		ALLOC_GROW(statements.values, statements.num+1, statements.alloc);
+		statements.values[statements.num++] = "signoff";
 	}
 
-	if (statements->num) {
+	if (statements.num) {
 		size_t i, j;
-		for (i = 0; i < statements->num; i++) {
+		for (i = 0; i < statements.num; i++) {
 			int found = 0;
-			for (j = 0; j < statement_types_num; j++) {
-				if (!prefixcmp(statement_types[j].name, statements->values[i])) {
+			for (j = 0; j < statement_types_len; j++) {
+				if (!prefixcmp(statement_types[j].name, statements.values[i])) {
 					found = 1;
 					break;
 				}
 			}
 			if (!found)
-				die("Unknown signing-statement `%s'", statements->values[i]);
+				die("Unknown signing-statement `%s'", statements.values[i]);
 		}
 	}
 
@@ -1244,7 +1254,7 @@ static int git_commit_config(const char *k, const char *v, void *cb)
 			{ "cc", "CC" }
 		};
 
-		statement_types_len = ARRAY_SIZE(builtin_formats);
+		statement_types_len = ARRAY_SIZE(builtin_statements);
 		ALLOC_GROW(statement_types, statement_types_len, statement_types_alloc);
 		memcpy(statement_types, builtin_statements,
 		       sizeof(*builtin_statements)*ARRAY_SIZE(builtin_statements));

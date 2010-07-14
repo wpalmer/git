@@ -111,12 +111,12 @@ static int get_value(struct parse_opt_ctx_t *p,
 
 	case OPTION_STRING_MULTIPLE:
 		if (unset)
-			((option_strings *)opt->value)->num = 0;
+			((struct option_strings *)opt->value)->num = 0;
 		else {
-			struct option_strings *strings = ((option_strings *)opt->value);
+			struct option_strings *strings = ((struct option_strings *)opt->value);
 			ALLOC_GROW(strings->values, strings->num+1, strings->alloc);
 
-			if (opt->flags & PARSE_OPT_OPTARG && !p->opt) {
+			if (opt->flags & PARSE_OPT_OPTARG && !p->opt)
 				strings->values[strings->num++] = (const char *)opt->defval;
 			else
 				return get_arg(p, opt, flags, &strings->values[strings->num++]);
