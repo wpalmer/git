@@ -639,7 +639,7 @@ static int prepare_to_commit(const char *index_file, const char *prefix,
 				}
 			}
 
-			strbuf_addstr(&sob, found->format);
+			strbuf_addf(&sob, "%s: ", found->format);
 			strbuf_addstr(&sob, fmt_name(getenv("GIT_COMMITTER_NAME"),
 						     getenv("GIT_COMMITTER_EMAIL")));
 			strbuf_addch(&sob, '\n');
