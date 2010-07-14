@@ -1,0 +1,17 @@
+PURPOSE
+To allow the specification of "rename hints", which conceptually have the form:
+<this file> <is/is-not related to> <this file>
+
+GOALS
+ - allow automatic "aggressive" search for history when using "blame".
+ - prevent search when using "blame" from entering files which are /not/
+   related.
+ - prevent --stat from showing unrelated-but-similar-looking files as
+   related.
+
+IMPLEMENTATION
+ - info/rename-hints
+ - git notes? (attach hints to specific commit?)
+ - allow blobs to be specified
+ - allow tree+blob to be specified (blob within tree not related to, etc)
+ - allow commit+blob to be specified
