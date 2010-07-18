@@ -645,7 +645,9 @@ static int prepare_to_commit(const char *index_file, const char *prefix,
 			strbuf_addch(&sob, '\n');
 			for (j = sb.len - 1; j > 0 && sb.buf[j - 1] != '\n'; j--)
 				; /* do nothing */
-			if (prefixcmp(sb.buf + i, sob.buf)) {
+// if last line is not what we are about to add, add it
+			if (prefixcmp(sb.buf + j, sob.buf)) {
+// add a newline if we aren't in a block of signing statements
 				if (!j || !ends_rfc2822_footer(&sb))
 					strbuf_addch(&sb, '\n');
 				strbuf_addbuf(&sb, &sob);
