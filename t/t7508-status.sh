@@ -7,7 +7,63 @@ test_description='git status'
 
 . ./test-lib.sh
 
+cat >expect << EOF
+# On branch master
+# Unmerged paths:
+#   (use "git add/rm <file>..." as appropriate to mark resolution)
+#
+#	both modified:      A
+#
+# Untracked files:
+#   (use "git add <file>..." to include in what will be committed)
+#
+#	expect
+#	output
+EOF
+
+test_expect_failure "conflict with copy should not trigger rename detection" '
+	cat >A <<- \EOF &&
+		a aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+		b bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+		c cccccccccccccccccccccccccccccccccccccccccccccccc
+		d dddddddddddddddddddddddddddddddddddddddddddddddd
+		e eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+		f ffffffffffffffffffffffffffffffffffffffffffffffff
+		g gggggggggggggggggggggggggggggggggggggggggggggggg
+		h hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh
+		i iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii
+		j jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj
+		k kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk
+		l llllllllllllllllllllllllllllllllllllllllllllllll
+		m mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+		n nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn
+		o oooooooooooooooooooooooooooooooooooooooooooooooo
+EOF
+	git add A &&
+	git commit -m "add A" &&
+	git tag conflicted-merge-base &&
+	sed -e "/^g /s/.*/g : changed line/" <A >A+ &&
+	cp A B &&
+	mv A+ A &&
+	git add A B &&
+	git commit -m "change and copy A" &&
+	git tag change-copy &&
+	git reset --hard conflicted-merge-base &&
+	sed -e "/^g /s/.*/g : modified row/" <A >A+ &&
+	mv A+ A &&
+	git add A &&
+	git commit -m "change A" &&
+	test_must_fail git merge change-copy &&
+	git status > output &&
+	test_cmp expect output
+'
+
 test_expect_success 'setup' '
+	git reset --hard &&
+	git branch -m merge-test &&
+	git checkout --orphan master &&
+	git rm -f A &&
+	rm expect output &&
 	: >tracked &&
 	: >modified &&
 	mkdir dir1 &&
