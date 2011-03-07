@@ -511,11 +511,11 @@ static struct format_part *parse_special(const char *unparsed)
 			break;
 		case 'C':
 			part->type = FORMAT_PART_LITERAL;
-			part->literal = xcalloc(1, COLOR_MAXLEN);
 			if (unparsed[2] == '(') {
 				s = &unparsed[3];
 				e = strchr(s, ')');
 				if (e) {
+					part->literal = xcalloc(1, COLOR_MAXLEN);
 					color_parse_mem(s, e - s,
 							"--pretty format", part->literal);
 					part->literal_len = strlen(part->literal);
