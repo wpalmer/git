@@ -1706,6 +1706,9 @@ void format_commit_message_part(struct format_part *part, struct strbuf *sb,
 			indent2 = strtoul(part->argv[2], NULL, 10);
 		rewrap_message_tail(sb, c, width, indent1, indent2);
 		return;
+	case FORMAT_PART_FORMAT:
+		format_commit_message_parts(part->parts, sb, context);
+		return;
 	case FORMAT_PART_CONDITION_OPT_COLOR:
 		if (c->pretty_ctx->use_color)
 			format_commit_message_parts(part->parts, sb, context);
