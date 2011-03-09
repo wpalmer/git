@@ -928,7 +928,8 @@ struct format_parts *parse(const char *unparsed)
 static int quiet = 0;
 
 static struct option builtin_parse_format_options[] = {
-	OPT__QUIET(&quiet),
+	OPT__QUIET(&quiet,
+		   "just verify validity of format, do not output parse-tree"),
 	OPT_END()
 };
 
