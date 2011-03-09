@@ -2010,7 +2010,7 @@ void format_commit_message(const struct commit *commit,
 			context.message = logmsg_reencode(commit, output_enc);
 	}
 
-printf("FORMAT: %s\n", format);
+// printf("FORMAT: %s\n", format);
 
 	parsed = parse(format);
 
