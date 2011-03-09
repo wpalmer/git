@@ -1,0 +1,47 @@
+Plan of action:
+	- new parser, without recusive structure
+	- when referencing an alias which points to itself, consider that alias to be undefined
+		-> we didn't do this previously because:
+			1) we'd need to do the recursive check every time in the event of a bad config, potentially
+			   causing a slowdown which would be difficult to notice the cause of. Once we are parsing a
+			   format "only once", there would no longer be a need for this, so we could just think of the
+			   malformed-alias as a literal.
+			2) As aliases couldn't be combined with other formats, there was never any ambiguity regarding
+			   what was meant to be an alias and what a format (--pretty=foo was either an alias or a bad
+			   [%-lacking] format)
+	- add recursive parts
+		- structure support
+		- %(format:...) [ie: specified raw format]
+			-> not actually useful except for debugging
+		- %(alias:...) [ie: specified alias, built-in or not]
+		- %(pretty:...) [ie: specified raw format, or alias]
+			- synonym: %(...)
+	- add additional formats
+		- one format per commit
+	- replace each pretty=<format> with a pre-defined alias
+		- one alias per commit
+	- refactor format_commit_message_part to a more-generic function which can prettify arbitrary objects/refs
+	- add support for for-each-ref style formats [committer:date, etc]
+		-> non-applicable, eg: tagger, is empty
+		- one per commit
+	- ensure "git show" has supprt for the new formats
+	- use new prettifier in for-each-ref
+	- add %(HEAD?)
+	- add %(remote?)
+	- add %(local?)
+	- add %(tag?)
+	- add %(blob?)
+	- add %(commit?)
+	- add %(tree?)
+	- internally use for-each-ref for branch list
+	- internally use for-each-ref for tag list
+	- add %(subtree) (or whatever to call "highest path containing a change")
+	- add support for command-based aliases
+		- pipe hashes, accept z-delimited stdout
+		- OR once per log
+
+
+Format:
+	%(long-opt)
+	%(condition ? sub-format : other-sub-format )
+	Note: we "never say die"! If any part of a format is unparsable, we consider it to be literal!
