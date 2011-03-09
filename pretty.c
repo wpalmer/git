@@ -1960,6 +1960,8 @@ void format_commit_message_part(struct format_part *part, struct strbuf *sb,
 		strbuf_addstr(sb, msg + c->body_off);
 		return;
 	default:
+		// should never be reached, but here for sanity's sake while we debug.
+		// replace with a die() before merge
 		strbuf_addstr(sb, "(UNKNOWN)");
 	}
 	return;
