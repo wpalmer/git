@@ -471,11 +471,15 @@ static size_t format_person_part(struct strbuf *sb, char part,
 	while (name_end > name_start && isspace(*(name_end-1)))
 		name_end--;
 	name_len = name_end-name_start+1;
+	if (name_len >= sizeof(person_name))
+		goto skip;
 	mail_start = msg+end+1;
 	mail_end = mail_start;
 	while (mail_end < msg_end && *mail_end != '>')
 		mail_end++;
 	mail_len = mail_end-mail_start+1;
+	if (mail_len >= sizeof(person_mail))
+		goto skip;
 	if (mail_end == msg_end)
 		goto skip;
 	end = mail_end-msg;
