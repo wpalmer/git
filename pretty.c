@@ -449,6 +449,7 @@ static size_t format_person_part(struct strbuf *sb, char part,
 	unsigned long date = 0;
 	char *ep;
 	const char *name_start, *name_end, *mail_start, *mail_end, *msg_end = msg+len;
+	size_t name_len, mail_len;
 	char person_name[1024];
 	char person_mail[1024];
 
@@ -469,29 +470,31 @@ static size_t format_person_part(struct strbuf *sb, char part,
 	name_end = msg+end;
 	while (name_end > name_start && isspace(*(name_end-1)))
 		name_end--;
+	name_len = name_end-name_start+1;
 	mail_start = msg+end+1;
 	mail_end = mail_start;
 	while (mail_end < msg_end && *mail_end != '>')
 		mail_end++;
+	mail_len = mail_end-mail_start+1;
 	if (mail_end == msg_end)
 		goto skip;
 	end = mail_end-msg;
 
 	if (part == 'N' || part == 'E') { /* mailmap lookup */
-		strlcpy(person_name, name_start, name_end-name_start+1);
-		strlcpy(person_mail, mail_start, mail_end-mail_start+1);
+		strlcpy(person_name, name_start, name_len);
+		strlcpy(person_mail, mail_start, mail_len);
 		mailmap_name(person_mail, sizeof(person_mail), person_name, sizeof(person_name));
 		name_start = person_name;
-		name_end = name_start + strlen(person_name);
+		name_len = strlen(person_name);
 		mail_start = person_mail;
-		mail_end = mail_start +  strlen(person_mail);
+		mail_len = strlen(person_mail);
 	}
 	if (part == 'n' || part == 'N') {	/* name */
-		strbuf_add(sb, name_start, name_end-name_start);
+		strbuf_add(sb, name_start, name_len);
 		return placeholder_len;
 	}
 	if (part == 'e' || part == 'E') {	/* email */
-		strbuf_add(sb, mail_start, mail_end-mail_start);
+		strbuf_add(sb, mail_start, mail_len);
 		return placeholder_len;
 	}
 
