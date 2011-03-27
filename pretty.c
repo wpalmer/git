@@ -126,8 +126,30 @@ static struct format_part *parse_extended(const char *unparsed)
 {
 	struct format_part *part = format_part_alloc();
 	const char *c = unparsed + 2; /* "%(..." + strlen("%(") */
+	const char *e;
 
 	c += strspn(c, WHITESPACE);
+
+	if (!prefixcmp(c, "color")) {
+		part->type = FORMAT_PART_LITERAL;
+		c += 5 + strspn(c + 5, WHITESPACE);
+		if (*c == ')') {
+			part->literal = xstrdup(GIT_COLOR_RESET);
+			part->literal_len = strlen(part->literal);
+			goto success;
+		}
+		if (*c != ':')
+			goto fail;
+		c++;
+		e = strchr(c, ')');
+		part->literal = xcalloc(1, COLOR_MAXLEN);
+		if (!e || !color_parse_len(c, e - c,
+					   part->literal))
+			goto fail;
+		part->literal_len = strlen(part->literal);
+		c = e;
+		goto success;
+	}
 
 	if (!prefixcmp(c, "wrap")) {
 		part->type = FORMAT_PART_WRAP;

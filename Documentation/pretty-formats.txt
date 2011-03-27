@@ -138,6 +138,7 @@ The placeholders are:
 - '%Cblue': switch color to blue
 - '%Creset': reset color
 - '%C(...)': color specification, as described in color.branch.* config option
+- '%(color:...)': alternative form of %C(...)
 - '%m': left, right or boundary mark
 - '%n': newline
 - '%%': a raw '%'
