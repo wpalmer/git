@@ -144,6 +144,7 @@ The placeholders are:
 - '%x00': print a byte from a hex code
 - '%w([<w>[,<i1>[,<i2>]]])': switch line wrapping, like the -w option of
   linkgit:git-shortlog[1].
+- '%(wrap:[<w>[,<i1>[,<i2>]]])': alternative form of %w(...)
 
 NOTE: Some placeholders may depend on other options given to the
 revision traversal engine. For example, the `%g*` reflog options will

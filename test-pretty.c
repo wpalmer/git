@@ -17,6 +17,7 @@ static const char *all = "a"
 "%gD%gd%gs"
 "%Cred%Cgreen%Cblue%Creset%C(reset)"
 "%m%w()%w(1)%w(1,2)%w(1,2,3)"
+"%(wrap)%(wrap:1)%(wrap:1,2)%(wrap:1,2,3)"
 "%x0a%n%%%@";
 
 static struct strbuf *parts_debug(struct format_parts *parts,

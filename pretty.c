@@ -108,12 +108,10 @@ const char *parse_arg(struct format_part *part, enum format_arg_type type,
 	arg.type = type;
 
 	c += strspn(c, WHITESPACE);
-	if (!isdigit(*c))
-		return NULL;
-	arg.uint = strtoul(c, &t, 10);
-	if (t == c)
-		return NULL;
-	c = t + strspn(t, WHITESPACE);
+	if (isdigit(*c)) {
+		arg.uint = strtoul(c, &t, 10);
+		c = t + strspn(t, WHITESPACE);
+	}
 	if (*c == ',' || *c == ')'){
 		ALLOC_GROW(part->args, part->argc+1, part->args_alloc);
 		memcpy(&(part->args[part->argc]), &arg,
@@ -122,6 +120,41 @@ const char *parse_arg(struct format_part *part, enum format_arg_type type,
 		return c;
 	}
 	return NULL;
+}
+
+static struct format_part *parse_extended(const char *unparsed)
+{
+	struct format_part *part = format_part_alloc();
+	const char *c = unparsed + 2; /* "%(..." + strlen("%(") */
+
+	c += strspn(c, WHITESPACE);
+
+	if (!prefixcmp(c, "wrap")) {
+		part->type = FORMAT_PART_WRAP;
+		c += 4;
+		while(part->argc <= 3){
+			c += strspn(c, WHITESPACE);
+			if (*c == ')')
+				goto success;
+			if (*c != (part->argc ? ',' : ':'))
+				goto fail;
+			if (part->argc == 3)
+				goto fail;
+
+			c = parse_arg(part, FORMAT_ARG_UINT, c+1);
+			if (!c)
+				goto fail;
+		}
+		goto fail;
+	}
+
+fail:
+	format_part_free(&part);
+	return NULL;
+
+success:
+	part->format_len = c - unparsed + 1;
+	return part;
 }
 
 static struct format_part *parse_special(const char *unparsed)
@@ -156,6 +189,8 @@ static struct format_part *parse_special(const char *unparsed)
 			}
 		}
 		return part;
+	case '(':
+		return parse_extended(unparsed);
 	}
 
 	part = format_part_alloc();
