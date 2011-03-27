@@ -45,6 +45,13 @@ void color_parse(const char *value, const char *var, char *dst)
 void color_parse_mem(const char *value, int value_len, const char *var,
 		char *dst)
 {
+	if (color_parse_len(value, value_len, dst))
+		return;
+	die("bad color value '%.*s' for variable '%s'", value_len, value, var);
+}
+
+int color_parse_len(const char *value, int value_len, char *dst)
+{
 	const char *ptr = value;
 	int len = value_len;
 	unsigned int attr = 0;
@@ -53,7 +60,7 @@ void color_parse_mem(const char *value, int value_len, const char *var,
 
 	if (!strncasecmp(value, "reset", len)) {
 		strcpy(dst, GIT_COLOR_RESET);
-		return;
+		return 1;
 	}
 
 	/* [fg [bg]] [attr]... */
@@ -82,13 +89,13 @@ void color_parse_mem(const char *value, int value_len, const char *var,
 				bg = val;
 				continue;
 			}
-			goto bad;
+			return 0;
 		}
 		val = parse_attr(word, wordlen);
 		if (0 <= val)
 			attr |= (1 << val);
 		else
-			goto bad;
+			return 0;
 	}
 
 	if (attr || fg >= 0 || bg >= 0) {
@@ -130,9 +137,7 @@ void color_parse_mem(const char *value, int value_len, const char *var,
 		*dst++ = 'm';
 	}
 	*dst = 0;
-	return;
-bad:
-	die("bad color value '%.*s' for variable '%s'", value_len, value, var);
+	return 1;
 }
 
 int git_config_colorbool(const char *var, const char *value, int stdout_is_tty)

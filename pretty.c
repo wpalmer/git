@@ -752,11 +752,10 @@ static size_t format_commit_one(struct strbuf *sb, const char *placeholder,
 		if (placeholder[1] == '(') {
 			const char *end = strchr(placeholder + 2, ')');
 			char color[COLOR_MAXLEN];
-			if (!end)
+			if (!end || !color_parse_len(placeholder + 2,
+						     end - (placeholder + 2),
+						     color))
 				return 0;
-			color_parse_mem(placeholder + 2,
-					end - (placeholder + 2),
-					"--pretty format", color);
 			strbuf_addstr(sb, color);
 			return end - placeholder + 1;
 		}
