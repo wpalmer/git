@@ -114,6 +114,8 @@ The placeholders are:
 - '%ar': author date, relative
 - '%at': author date, UNIX timestamp
 - '%ai': author date, ISO 8601 format
+- '%(authordate[:<format>])': author date. Without a <format>, the --date= option is respected.
+  Otherwise, a format of the type which can be specified via the --date= option is taken.
 - '%cn': committer name
 - '%cN': committer name (respecting .mailmap, see linkgit:git-shortlog[1] or linkgit:git-blame[1])
 - '%ce': committer email
@@ -123,6 +125,8 @@ The placeholders are:
 - '%cr': committer date, relative
 - '%ct': committer date, UNIX timestamp
 - '%ci': committer date, ISO 8601 format
+- '%(committerdate[:<format>])': committer date. Without a <format>, the --date= option is respected.
+  Otherwise, a format of the type which can be specified via the --date= option is taken.
 - '%d': ref names, like the --decorate option of linkgit:git-log[1]
 - '%e': encoding
 - '%s': subject

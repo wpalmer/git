@@ -19,6 +19,16 @@ static const char *all = "a"
 "%m%w()%w(1)%w(1,2)%w(1,2,3)"
 "%(wrap)%(wrap:1)%(wrap:1,2)%(wrap:1,2,3)"
 "%(color)%(color:red)%(color:red bold)%(color:red green bold)"
+"%(authordate)%(authordate:default)%(authordate:relative)"
+"%(authordate:short)%(authordate:local)"
+"%(authordate:iso8601)%(authordate:iso)"
+"%(authordate:rfc2822)%(authordate:rfc)"
+"%(authordate:unix)%(authordate:raw)"
+"%(committerdate)%(committerdate:default)%(committerdate:relative)"
+"%(committerdate:short)%(committerdate:local)"
+"%(committerdate:iso8601)%(committerdate:iso)"
+"%(committerdate:rfc2822)%(committerdate:rfc)"
+"%(committerdate:unix)%(committerdate:raw)"
 "%x0a%n%%%@";
 
 static struct strbuf *parts_debug(struct format_parts *parts,

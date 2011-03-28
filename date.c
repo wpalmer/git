@@ -659,28 +659,48 @@ int parse_date(const char *date, char *result, int maxlen)
 	return date_string(timestamp, offset, result, maxlen);
 }
 
+size_t parse_date_format_len(const char *format, enum date_mode *dmode)
+{
+	if (!strcmp(format, "relative")) {
+		*dmode = DATE_RELATIVE;
+		return 8;
+	} else if (!strcmp(format, "iso8601")) {
+		*dmode = DATE_ISO8601;
+		return 7;
+	} else if (!strcmp(format, "iso")) {
+		*dmode = DATE_ISO8601;
+		return 3;
+	} else if (!strcmp(format, "rfc2822")) {
+		*dmode = DATE_RFC2822;
+		return 7;
+	} else if (!strcmp(format, "rfc")) {
+		*dmode = DATE_RFC2822;
+		return 3;
+	} else if (!strcmp(format, "short")) {
+		*dmode = DATE_SHORT;
+		return 5;
+	} else if (!strcmp(format, "local")) {
+		*dmode = DATE_LOCAL;
+		return 5;
+	} else if (!strcmp(format, "default")) {
+		*dmode = DATE_NORMAL;
+		return 7;
+	} else if (!strcmp(format, "raw")) {
+		*dmode = DATE_RAW;
+		return 3;
+	} else if (!strcmp(format, "unix")) {
+		*dmode = DATE_UNIX;
+		return 4;
+	} else
+		return 0;
+}
+
 enum date_mode parse_date_format(const char *format)
 {
-	if (!strcmp(format, "relative"))
-		return DATE_RELATIVE;
-	else if (!strcmp(format, "iso8601") ||
-		 !strcmp(format, "iso"))
-		return DATE_ISO8601;
-	else if (!strcmp(format, "rfc2822") ||
-		 !strcmp(format, "rfc"))
-		return DATE_RFC2822;
-	else if (!strcmp(format, "short"))
-		return DATE_SHORT;
-	else if (!strcmp(format, "local"))
-		return DATE_LOCAL;
-	else if (!strcmp(format, "default"))
-		return DATE_NORMAL;
-	else if (!strcmp(format, "raw"))
-		return DATE_RAW;
-	else if (!strcmp(format, "unix"))
-		return DATE_UNIX;
-	else
+	enum date_mode dmode;
+	if (!parse_date_format_len(format, &dmode))
 		die("unknown date format %s", format);
+	return dmode;
 }
 
 void datestamp(char *buf, int bufsize)

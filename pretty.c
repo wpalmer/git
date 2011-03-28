@@ -102,19 +102,38 @@ const char *parse_arg(struct format_part *part, enum format_arg_type type,
 	struct format_arg arg = {0};
 	const char *c = unparsed;
 	char *t;
+	size_t len;
+	char date_format[DATE_FORMAT_MAX];
 
-	if (type != FORMAT_ARG_UINT)
-		return NULL;
 	arg.type = type;
 
 	c += strspn(c, WHITESPACE);
-	if (isdigit(*c)) {
-		arg.uint = strtoul(c, &t, 10);
-		c = t + strspn(t, WHITESPACE);
+
+	switch (type){
+	case FORMAT_ARG_UINT:
+		if (isdigit(*c)) {
+			arg.uint = strtoul(c, &t, 10);
+			c = t;
+		}
+		break;
+	case FORMAT_ARG_DATE_MODE:
+		len = strcspn(c, WHITESPACE ",)");
+		if (len >= DATE_FORMAT_MAX)
+			return NULL;
+		strncpy(date_format, c, len);
+		len = parse_date_format_len(date_format, &arg.dmode);
+		if (!len)
+			return NULL;
+		c += len;
+		break;
+	default:
+		return NULL;
 	}
+
+	c += strspn(c, WHITESPACE);
 	if (*c == ',' || *c == ')'){
 		ALLOC_GROW(part->args, part->argc+1, part->args_alloc);
-		memcpy(&(part->args[part->argc]), &arg,
+		memcpy(&part->args[part->argc], &arg,
 		       sizeof(struct format_arg));
 		part->argc++;
 		return c;
@@ -129,6 +148,26 @@ static struct format_part *parse_extended(const char *unparsed)
 	const char *e;
 
 	c += strspn(c, WHITESPACE);
+
+	if (!prefixcmp(c, "author") || !prefixcmp(c, "committer")) {
+		e = c;
+		c += (*e == 'a') ? 6 : 9;
+		if (!prefixcmp(c, "date")) {
+			part->type = (*e == 'a') ? FORMAT_PART_AUTHOR_DATE :
+						   FORMAT_PART_COMMITTER_DATE;
+			c += 4 + strspn(c + 4, WHITESPACE);
+			if (*c == ')')
+				goto success;
+			if (*c != ':')
+				goto fail;
+			c = parse_arg(part, FORMAT_ARG_DATE_MODE, c+1);
+			if (!c)
+				goto fail;
+			goto success;
+		}
+
+		c = e;
+	}
 
 	if (!prefixcmp(c, "color")) {
 		part->type = FORMAT_PART_LITERAL;

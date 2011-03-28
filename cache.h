@@ -829,6 +829,8 @@ void datestamp(char *buf, int bufsize);
 #define approxidate(s) approxidate_careful((s), NULL)
 unsigned long approxidate_careful(const char *, int *);
 unsigned long approxidate_relative(const char *date, const struct timeval *now);
+#define DATE_FORMAT_MAX 9 /* strlen("relative") + 1 */
+size_t parse_date_format_len(const char *format, enum date_mode *dmode);
 enum date_mode parse_date_format(const char *format);
 
 #define IDENT_WARN_ON_NO_NAME  1
