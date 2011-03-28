@@ -19,11 +19,15 @@ static const char *all = "a"
 "%m%w()%w(1)%w(1,2)%w(1,2,3)"
 "%(wrap)%(wrap:1)%(wrap:1,2)%(wrap:1,2,3)"
 "%(color)%(color:red)%(color:red bold)%(color:red green bold)"
+"%(authorname)%(authorname:mailmap)"
+"%(authoremail)%(authoremail:mailmap)"
 "%(authordate)%(authordate:default)%(authordate:relative)"
 "%(authordate:short)%(authordate:local)"
 "%(authordate:iso8601)%(authordate:iso)"
 "%(authordate:rfc2822)%(authordate:rfc)"
 "%(authordate:unix)%(authordate:raw)"
+"%(committername)%(committername:mailmap)"
+"%(committeremail)%(committeremail:mailmap)"
 "%(committerdate)%(committerdate:default)%(committerdate:relative)"
 "%(committerdate:short)%(committerdate:local)"
 "%(committerdate:iso8601)%(committerdate:iso)"
@@ -46,14 +50,10 @@ static struct strbuf *parts_debug(struct format_parts *parts,
 		{FORMAT_PART_TREE_HASH, "TREE_HASH"},
 		{FORMAT_PART_TREE_HASH_ABBREV, "TREE_HASH_ABBREV"},
 		{FORMAT_PART_AUTHOR_NAME, "AUTHOR_NAME"},
-		{FORMAT_PART_AUTHOR_NAME_MAILMAP, "AUTHOR_NAME_MAILMAP"},
 		{FORMAT_PART_AUTHOR_EMAIL, "AUTHOR_EMAIL"},
-		{FORMAT_PART_AUTHOR_EMAIL_MAILMAP, "AUTHOR_EMAIL_MAILMAP"},
 		{FORMAT_PART_AUTHOR_DATE, "AUTHOR_DATE"},
 		{FORMAT_PART_COMMITTER_NAME, "COMMITTER_NAME"},
-		{FORMAT_PART_COMMITTER_NAME_MAILMAP, "COMMITTER_NAME_MAILMAP"},
 		{FORMAT_PART_COMMITTER_EMAIL, "COMMITTER_EMAIL"},
-		{FORMAT_PART_COMMITTER_EMAIL_MAILMAP, "COMMITTER_EMAIL_MAILMAP"},
 		{FORMAT_PART_COMMITTER_DATE, "COMMITTER_DATE"},
 
 		{FORMAT_PART_DECORATE, "DECORATE"},
@@ -154,6 +154,12 @@ static struct strbuf *parts_debug(struct format_parts *parts,
 				case FORMAT_ARG_UINT:
 					strbuf_addstr(buf, "UINT:");
 					strbuf_addf(buf, "%lu", part->args[j].uint);
+					break;
+				case FORMAT_ARG_BOOLEAN:
+					strbuf_addstr(buf, "BOOLEAN:");
+					strbuf_addstr(buf,
+						      part->args[j].boolean ?
+						       "TRUE" : "FALSE");
 					break;
 				case FORMAT_ARG_DATE_MODE:
 					strbuf_addstr(buf, "DATE_MODE:");

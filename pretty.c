@@ -90,6 +90,16 @@ static void part_add_arg_date_mode(struct format_part *part,
 	return;
 }
 
+static void part_add_arg_boolean(struct format_part *part, int value)
+{
+	part->args = xrealloc(part->args,
+			      sizeof(struct format_arg) * (part->argc+1));
+	part->args[part->argc].type = FORMAT_ARG_BOOLEAN;
+	part->args[part->argc].boolean = value ? 1 : 0;
+	part->argc++;
+	return;
+}
+
 /*
 * Parse a single argument of an extended format, up to the next delimiter
 * ie: up to ',' or ')'
@@ -164,6 +174,31 @@ static struct format_part *parse_extended(const char *unparsed)
 			if (!c)
 				goto fail;
 			goto success;
+		}
+		if (!prefixcmp(c, "name") || !prefixcmp(c, "email")) {
+			if (*c == 'n') { /* name */
+				part->type = (*e == 'a') ? FORMAT_PART_AUTHOR_NAME :
+							   FORMAT_PART_COMMITTER_NAME;
+				c += 4;
+			} else { /* email */
+				part->type = (*e == 'a') ? FORMAT_PART_AUTHOR_EMAIL :
+							   FORMAT_PART_COMMITTER_EMAIL;
+				c += 5;
+			}
+
+			strspn(c, WHITESPACE);
+			if (*c == ')')
+				goto success;
+			if (*c != ':')
+				goto fail;
+			c += 1 + strspn(c + 1, WHITESPACE);
+			if (!prefixcmp(c, "mailmap")) {
+				part_add_arg_boolean(part, 1);
+				c += 7 + strspn(c + 7, WHITESPACE);
+				if (*c == ')')
+					goto success;
+			}
+			goto fail;
 		}
 
 		c = e;
@@ -285,13 +320,15 @@ static struct format_part *parse_special(const char *unparsed)
 			part->type = FORMAT_PART_AUTHOR_NAME;
 			return part;
 		case 'N':
-			part->type = FORMAT_PART_AUTHOR_NAME_MAILMAP;
+			part->type = FORMAT_PART_AUTHOR_NAME;
+			part_add_arg_boolean(part, 1);
 			return part;
 		case 'e':
 			part->type = FORMAT_PART_AUTHOR_EMAIL;
 			return part;
 		case 'E':
-			part->type = FORMAT_PART_AUTHOR_EMAIL_MAILMAP;
+			part->type = FORMAT_PART_AUTHOR_EMAIL;
+			part_add_arg_boolean(part, 1);
 			return part;
 		case 'd':
 			part->type = FORMAT_PART_AUTHOR_DATE;
@@ -321,13 +358,15 @@ static struct format_part *parse_special(const char *unparsed)
 			part->type = FORMAT_PART_COMMITTER_NAME;
 			return part;
 		case 'N':
-			part->type = FORMAT_PART_COMMITTER_NAME_MAILMAP;
+			part->type = FORMAT_PART_COMMITTER_NAME;
+			part_add_arg_boolean(part, 1);
 			return part;
 		case 'e':
 			part->type = FORMAT_PART_COMMITTER_EMAIL;
 			return part;
 		case 'E':
-			part->type = FORMAT_PART_COMMITTER_EMAIL_MAILMAP;
+			part->type = FORMAT_PART_COMMITTER_EMAIL;
+			part_add_arg_boolean(part, 1);
 			return part;
 		case 'd':
 			part->type = FORMAT_PART_COMMITTER_DATE;
@@ -976,10 +1015,11 @@ static void format_person_part(struct strbuf *sb, struct format_part *part,
 		return;
 	end = mail_end-msg;
 
-	if (part->type == FORMAT_PART_AUTHOR_NAME_MAILMAP ||
-	    part->type == FORMAT_PART_AUTHOR_EMAIL_MAILMAP ||
-	    part->type == FORMAT_PART_COMMITTER_NAME_MAILMAP ||
-	    part->type == FORMAT_PART_COMMITTER_EMAIL_MAILMAP) {
+	if ((part->type == FORMAT_PART_AUTHOR_NAME ||
+	     part->type == FORMAT_PART_AUTHOR_EMAIL ||
+	     part->type == FORMAT_PART_COMMITTER_NAME ||
+	     part->type == FORMAT_PART_COMMITTER_EMAIL) &&
+	    part->argc && part->args[0].boolean) { /* mailmap */
 		/* copy up to, and including, the end delimiter */
 		strlcpy(person_name, name_start, name_len+1);
 		strlcpy(person_mail, mail_start, mail_len+1);
@@ -990,16 +1030,12 @@ static void format_person_part(struct strbuf *sb, struct format_part *part,
 		mail_len = strlen(person_mail);
 	}
 	if (part->type == FORMAT_PART_AUTHOR_NAME ||
-	    part->type == FORMAT_PART_AUTHOR_NAME_MAILMAP ||
-	    part->type == FORMAT_PART_COMMITTER_NAME ||
-	    part->type == FORMAT_PART_COMMITTER_NAME_MAILMAP) {
+	    part->type == FORMAT_PART_COMMITTER_NAME) {
 		strbuf_add(sb, name_start, name_len);
 		return;
 	}
 	if (part->type == FORMAT_PART_AUTHOR_EMAIL ||
-	    part->type == FORMAT_PART_AUTHOR_EMAIL_MAILMAP ||
-	    part->type == FORMAT_PART_COMMITTER_EMAIL ||
-	    part->type == FORMAT_PART_COMMITTER_EMAIL_MAILMAP) {
+	    part->type == FORMAT_PART_COMMITTER_EMAIL) {
 		strbuf_add(sb, mail_start, mail_len);
 		return;
 	}
@@ -1338,17 +1374,13 @@ void format_commit_message_part(struct format_part *part,
 
 	switch (part->type) {
 	case FORMAT_PART_AUTHOR_NAME:
-	case FORMAT_PART_AUTHOR_NAME_MAILMAP:
 	case FORMAT_PART_AUTHOR_EMAIL:
-	case FORMAT_PART_AUTHOR_EMAIL_MAILMAP:
 	case FORMAT_PART_AUTHOR_DATE:
 		format_person_part(sb, part, commit->buffer + c->author.off,
 				   c->author.len, c->pretty_ctx->date_mode);
 		return;
 	case FORMAT_PART_COMMITTER_NAME:
-	case FORMAT_PART_COMMITTER_NAME_MAILMAP:
 	case FORMAT_PART_COMMITTER_EMAIL:
-	case FORMAT_PART_COMMITTER_EMAIL_MAILMAP:
 	case FORMAT_PART_COMMITTER_DATE:
 		format_person_part(sb, part, commit->buffer + c->committer.off,
 				   c->committer.len, c->pretty_ctx->date_mode);

@@ -97,7 +97,13 @@ The title was >>t4119: test autocomputing -p<n> for traditional diff input.<<
 
 --------
 +
-The placeholders are:
+The placeholders are divided into two categories, "short forms",
+for quickly typing the more-common placeholders, and "long forms",
+which may be more readable, and may support various additional
+options.
++
+--
+Short forms:
 
 - '%H': commit hash
 - '%h': abbreviated commit hash
@@ -114,8 +120,6 @@ The placeholders are:
 - '%ar': author date, relative
 - '%at': author date, UNIX timestamp
 - '%ai': author date, ISO 8601 format
-- '%(authordate[:<format>])': author date. Without a <format>, the --date= option is respected.
-  Otherwise, a format of the type which can be specified via the --date= option is taken.
 - '%cn': committer name
 - '%cN': committer name (respecting .mailmap, see linkgit:git-shortlog[1] or linkgit:git-blame[1])
 - '%ce': committer email
@@ -125,8 +129,6 @@ The placeholders are:
 - '%cr': committer date, relative
 - '%ct': committer date, UNIX timestamp
 - '%ci': committer date, ISO 8601 format
-- '%(committerdate[:<format>])': committer date. Without a <format>, the --date= option is respected.
-  Otherwise, a format of the type which can be specified via the --date= option is taken.
 - '%d': ref names, like the --decorate option of linkgit:git-log[1]
 - '%e': encoding
 - '%s': subject
@@ -142,20 +144,61 @@ The placeholders are:
 - '%Cblue': switch color to blue
 - '%Creset': reset color
 - '%C(...)': color specification, as described in color.branch.* config option
-- '%(color:...)': alternative form of %C(...)
 - '%m': left, right or boundary mark
 - '%n': newline
 - '%%': a raw '%'
 - '%x00': print a byte from a hex code
 - '%w([<w>[,<i1>[,<i2>]]])': switch line wrapping, like the -w option of
   linkgit:git-shortlog[1].
-- '%(wrap:[<w>[,<i1>[,<i2>]]])': alternative form of %w(...)
+
+Long forms:
+
+- '%(authorname[:mailmap])':
++
+author name, optionally respecting .mailmap (see linkgit:git-shortlog[1]
+or linkgit:git-blame[1]).
+
+- '%(authoremail[:mailmap])':
++
+author email, optionally respecting .mailmap (see linkgit:git-shortlog[1]
+or linkgit:git-blame[1]).
+
+- '%(authordate[:<format>])':
++
+author date. Without a <format>, the --date= option is respected.
+Otherwise, a format of the type which can be specified via the --date=
+option is taken.
+
+- '%(committername[:mailmap])':
++
+committer name, optionally respecting .mailmap (see
+linkgit:git-shortlog[1] or linkgit:git-blame[1]).
+
+- '%(committeremail[:mailmap])':
++
+committer email, optionally respecting .mailmap (see
+linkgit:git-shortlog[1] or linkgit:git-blame[1]).
+
+- '%(committerdate[:<format>])':
++
+committer date. Without a <format>, the --date= option is respected.
+Otherwise, a format of the type which can be specified via the --date=
+option is taken.
+
+- '%(color:[<spec>])':
++
+color specification, as described in color.branch.* config option.
+
+- '%(wrap:[<w>[,<i1>[,<i2>]]])':
++
+switch line wrapping, like the -w option of linkgit:git-shortlog[1].
 
 NOTE: Some placeholders may depend on other options given to the
 revision traversal engine. For example, the `%g*` reflog options will
 insert an empty string unless we are traversing reflog entries (e.g., by
 `git log -g`). The `%d` placeholder will use the "short" decoration
 format if `--decorate` was not already provided on the command line.
+--
 
 If you add a `{plus}` (plus sign) after '%' of a placeholder, a line-feed
 is inserted immediately before the expansion if and only if the

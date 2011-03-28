@@ -95,14 +95,10 @@ enum format_part_type {
 	FORMAT_PART_TREE_HASH_ABBREV,
 
 	FORMAT_PART_AUTHOR_NAME,
-	FORMAT_PART_AUTHOR_NAME_MAILMAP,
 	FORMAT_PART_AUTHOR_EMAIL,
-	FORMAT_PART_AUTHOR_EMAIL_MAILMAP,
 	FORMAT_PART_AUTHOR_DATE,
 	FORMAT_PART_COMMITTER_NAME,
-	FORMAT_PART_COMMITTER_NAME_MAILMAP,
 	FORMAT_PART_COMMITTER_EMAIL,
-	FORMAT_PART_COMMITTER_EMAIL_MAILMAP,
 	FORMAT_PART_COMMITTER_DATE,
 
 	FORMAT_PART_DECORATE,
@@ -130,6 +126,7 @@ enum format_part_magic {
 
 enum format_arg_type {
 	FORMAT_ARG_UINT,
+	FORMAT_ARG_BOOLEAN,
 	FORMAT_ARG_DATE_MODE
 };
 
@@ -137,6 +134,7 @@ struct format_arg {
 	enum format_arg_type type;
 	union {
 		unsigned long uint;
+		int boolean : 1;
 		enum date_mode dmode;
 	};
 };
