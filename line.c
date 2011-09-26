@@ -1797,6 +1797,9 @@ static void flush_lines(struct diff_options *opt, const char **ptr, const char *
 			fprintf(opt->file, "%s%s", line_prefix, buf.buf);
 			if (*ptr - p)
 				fwrite(p, *ptr - p, 1, opt->file);
+			fprintf(stderr, "\n<<<\n"); fflush(stderr);
+			fprintf(stderr, "%x", reset); fflush(stderr);
+			fprintf(stderr, "\n>>>\n"); fflush(stderr);
 			fprintf(opt->file, "%s\n", reset);
 			p = *ptr + 1;
 			(*lno)++;
