@@ -833,6 +833,9 @@ index 8f15b85..24595e2 100644
 +			eaten = 1;
 EOF
 
+test_line_log 'range to EOF' -L30,$:object.c <<\EOF
+EOF
+
 test_expect_failure "Test more than one file" false
 
 test_done
