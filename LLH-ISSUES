@@ -1,0 +1,5 @@
+ISSUES:
+	- N,$ broken [fixed]
+	- Multiple non-overlapping range specification results in SEGV?
+	- Assertion failure on last commit?
+	- log.c log_opt_usage is added, then removed, unused?
