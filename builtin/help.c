@@ -417,7 +417,10 @@ int cmd_help(int argc, const char **argv, const char *prefix)
 	int nongit;
 	const char *alias;
 	enum help_format parsed_help_format;
+
 	load_command_list("git-", &main_cmds, &other_cmds);
+	load_builtin_command_list(&main_cmds);
+	exclude_cmds(&other_cmds, &main_cmds);
 
 	argc = parse_options(argc, argv, prefix, builtin_help_options,
 			builtin_help_usage, 0);

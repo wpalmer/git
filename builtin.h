@@ -151,4 +151,20 @@ extern int cmd_show_ref(int argc, const char **argv, const char *prefix);
 extern int cmd_pack_refs(int argc, const char **argv, const char *prefix);
 extern int cmd_replace(int argc, const char **argv, const char *prefix);
 
+// Flags for defining prerequisites of builtin commands
+#define BUILTIN_RUN_SETUP		(1<<0)
+#define BUILTIN_RUN_SETUP_GENTLY	(1<<1)
+#define BUILTIN_USE_PAGER		(1<<2)
+/*
+ * require working tree to be present -- anything uses this needs
+ * RUN_SETUP for reading from the configuration file.
+ */
+#define BUILTIN_NEED_WORK_TREE		(1<<3)
+
+struct builtin_cmd_struct {
+	const char *cmd;
+	int (*fn)(int, const char **, const char *);
+	int option;
+};
+
 #endif

@@ -5,6 +5,8 @@
 #include "help.h"
 #include "common-cmds.h"
 
+extern struct builtin_cmd_struct builtin_commands[];
+
 /* most GUI terminals set COLUMNS (although some don't export it) */
 static int term_columns(void)
 {
@@ -189,6 +191,17 @@ static void list_commands_in_dir(struct cmdnames *cmds,
 	strbuf_release(&buf);
 }
 
+void load_builtin_command_list(struct cmdnames *builtin_cmds)
+{
+	int i;
+
+	for (i = 0; ; i++) {
+		struct builtin_cmd_struct *p = builtin_commands+i;
+		if (!p->cmd) break;
+		add_cmdname(builtin_cmds, p->cmd, strlen(p->cmd));
+	}
+}
+
 void load_command_list(const char *prefix,
 		struct cmdnames *main_cmds,
 		struct cmdnames *other_cmds)
@@ -239,8 +252,8 @@ void list_commands(const char *title, struct cmdnames *main_cmds,
 
 	if (main_cmds->cnt) {
 		const char *exec_path = git_exec_path();
-		printf("available %s in '%s'\n", title, exec_path);
-		printf("----------------");
+		printf("available %s builtin or in '%s'\n", title, exec_path);
+		printf("---------------------------");
 		mput_char('-', strlen(title) + strlen(exec_path));
 		putchar('\n');
 		pretty_print_string_list(main_cmds, longest);
@@ -321,6 +334,7 @@ const char *help_unknown_cmd(const char *cmd)
 	git_config(git_unknown_cmd_config, NULL);
 
 	load_command_list("git-", &main_cmds, &other_cmds);
+	load_builtin_command_list(&main_cmds);
 
 	add_cmd_list(&main_cmds, &aliases);
 	add_cmd_list(&main_cmds, &other_cmds);
@@ -361,9 +375,6 @@ const char *help_unknown_cmd(const char *cmd)
 
 	qsort(main_cmds.names, main_cmds.cnt,
 	      sizeof(*main_cmds.names), levenshtein_compare);
-
-	if (!main_cmds.cnt)
-		die ("Uh oh. Your system reports no Git commands at all.");
 
 	/* skip and count prefix matches */
 	for (n = 0; n < main_cmds.cnt && !main_cmds.names[n]->len; n++)
