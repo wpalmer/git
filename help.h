@@ -18,6 +18,7 @@ static inline void mput_char(char c, unsigned int num)
 
 extern void list_common_cmds_help(void);
 extern const char *help_unknown_cmd(const char *cmd);
+extern void load_builtin_command_list(struct cmdnames *builtin_cmds);
 extern void load_command_list(const char *prefix,
 			      struct cmdnames *main_cmds,
 			      struct cmdnames *other_cmds);
