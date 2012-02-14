@@ -95,6 +95,25 @@ static void add_path(struct strbuf *out, const char *path)
 	}
 }
 
+static void add_paths(struct strbuf *out, const char *paths)
+{
+	if (paths && *paths) {
+		char *buf, *path, *colon;
+		path = buf = xstrdup(paths);
+
+		while (1) {
+			if ((colon = strchr(path, PATH_SEP)))
+				*colon = 0;
+			add_path(out, path);
+
+			if (!colon)
+				break;
+			path = colon + 1;
+		}
+		free(buf);
+	}
+}
+
 void setup_path(void)
 {
 	const char *old_path = getenv("PATH");
@@ -107,6 +126,37 @@ void setup_path(void)
 		strbuf_addstr(&new_path, old_path);
 	else
 		strbuf_addstr(&new_path, _PATH_DEFPATH);
+
+	setenv("PATH", new_path.buf, 1);
+
+	strbuf_release(&new_path);
+}
+
+static int extra_path_config(const char *var, const char *value, void *data)
+{
+	if (!strcmp(var, "core.extrapath")) {
+		if (git_extra_path.len)
+			strbuf_addch(&git_extra_path, PATH_SEP);
+		strbuf_addstr(&git_extra_path, value);
+	}
+	return 0;
+}
+
+void setup_path_extra(void)
+{
+	const char *old_path = getenv("PATH");
+	struct strbuf new_path = STRBUF_INIT;
+
+
+	if (old_path)
+		strbuf_addstr(&new_path, old_path);
+	else
+		strbuf_addstr(&new_path, _PATH_DEFPATH);
+
+	strbuf_addstr(&new_path, old_path);
+
+	git_config(extra_path_config, NULL);
+	add_paths(&new_path, git_extra_path.buf);
 
 	setenv("PATH", new_path.buf, 1);
 

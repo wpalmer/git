@@ -182,14 +182,10 @@ static int handle_options(const char ***argv, int *argc, int *envchanged)
 static int handle_alias(int *argcp, const char ***argv)
 {
 	int envchanged = 0, ret = 0, saved_errno = errno;
-	const char *subdir;
 	int count, option_count;
 	const char **new_argv;
 	const char *alias_command;
 	char *alias_string;
-	int unused_nongit;
-
-	subdir = setup_git_directory_gently(&unused_nongit);
 
 	alias_command = (*argv)[0];
 	alias_string = alias_lookup(alias_command);
@@ -206,6 +202,8 @@ static int handle_alias(int *argcp, const char ***argv)
 			for (i = 1; i < argc; ++i)
 				alias_argv[i] = (*argv)[i];
 			alias_argv[argc] = NULL;
+
+			errno = saved_errno;
 
 			ret = run_command_v_opt(alias_argv, RUN_USING_SHELL);
 			if (ret >= 0)   /* normal exit */
@@ -247,9 +245,6 @@ static int handle_alias(int *argcp, const char ***argv)
 
 		ret = 1;
 	}
-
-	if (subdir && chdir(subdir))
-		die_errno("Cannot change to '%s'", subdir);
 
 	errno = saved_errno;
 
@@ -494,7 +489,9 @@ static void execv_dashed_external(const char **argv)
 
 static int run_argv(int *argcp, const char ***argv)
 {
-	int done_alias = 0;
+	int was_alias = 0, done_extra = 0, unused_nongit, saved_errno = errno;
+	const char *subdir;
+	static char root[PATH_MAX+1];
 
 	while (1) {
 		/* See if it's an internal command */
@@ -502,17 +499,55 @@ static int run_argv(int *argcp, const char ***argv)
 
 		/* .. then try the external ones */
 		execv_dashed_external(*argv);
+		saved_errno = errno;
 
-		/* It could be an alias -- this works around the insanity
-		 * of overriding "git log" with "git show" by having
-		 * alias.log = show
-		 */
-		if (done_alias || !handle_alias(argcp, argv))
+		/* .. set up to read some alternatives from config */
+		if (!done_extra) {
+			subdir = setup_git_directory_gently(&unused_nongit);
+			setup_path_extra();
+
+			if (subdir) {
+				/* save cwd after setup */
+				if (!getcwd(root, sizeof(root)-1))
+					die_errno("Unable to read work tree");
+
+				/* move to subdir prior to next exec attempt */
+				if (chdir(subdir))
+					die_errno("Cannot change to '%s'", subdir);
+
+				errno = saved_errno;
+			}
+
+			/* .. and try again with extra PATH from config */
+			execv_dashed_external(*argv);
+			saved_errno = errno;
+
+			/* move back to root prior to reading aliases */
+			if (subdir && chdir(root))
+				die_errno("Cannot change to '%s'", root);
+
+			errno = saved_errno;
+
+			/* It could be an alias -- this works around the insanity
+			* of overriding "git log" with "git show" by having
+			* alias.log = show
+			*/
+			was_alias = handle_alias(argcp, argv);
+
+			/* move back to subdir prior to next exec attempt */
+			if (subdir && chdir(subdir))
+				die_errno("Cannot change to '%s'", subdir);
+
+			errno = saved_errno;
+
+			if (!was_alias)
+				break;
+		} else
 			break;
-		done_alias = 1;
+		done_extra = 1;
 	}
 
-	return done_alias;
+	return was_alias;
 }
 
 

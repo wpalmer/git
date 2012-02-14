@@ -21,6 +21,7 @@ extern const char *help_unknown_cmd(const char *cmd);
 extern void load_builtin_command_list(struct cmdnames *builtin_cmds);
 extern void load_command_list(const char *prefix,
 			      struct cmdnames *main_cmds,
+			      struct cmdnames *exra_cmds,
 			      struct cmdnames *other_cmds);
 extern void add_cmdname(struct cmdnames *cmds, const char *name, int len);
 /* Here we require that excludes is a sorted list. */
@@ -28,6 +29,7 @@ extern void exclude_cmds(struct cmdnames *cmds, struct cmdnames *excludes);
 extern int is_in_cmdlist(struct cmdnames *cmds, const char *name);
 extern void list_commands(const char *title,
 			  struct cmdnames *main_cmds,
+			  struct cmdnames *extra_cmds,
 			  struct cmdnames *other_cmds);
 
 #endif /* HELP_H */

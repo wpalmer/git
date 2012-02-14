@@ -269,7 +269,7 @@ static int git_help_config(const char *var, const char *value, void *cb)
 	return git_default_config(var, value, cb);
 }
 
-static struct cmdnames main_cmds, other_cmds;
+static struct cmdnames main_cmds, extra_cmds, other_cmds;
 
 void list_common_cmds_help(void)
 {
@@ -291,6 +291,7 @@ void list_common_cmds_help(void)
 static int is_git_command(const char *s)
 {
 	return is_in_cmdlist(&main_cmds, s) ||
+		is_in_cmdlist(&extra_cmds, s);
 		is_in_cmdlist(&other_cmds, s);
 }
 
@@ -418,9 +419,11 @@ int cmd_help(int argc, const char **argv, const char *prefix)
 	const char *alias;
 	enum help_format parsed_help_format;
 
-	load_command_list("git-", &main_cmds, &other_cmds);
+	load_command_list("git-", &main_cmds, &extra_cmds, &other_cmds);
 	load_builtin_command_list(&main_cmds);
+	exclude_cmds(&extra_cmds, &main_cmds);
 	exclude_cmds(&other_cmds, &main_cmds);
+	exclude_cmds(&other_cmds, &extra_cmds);
 
 	argc = parse_options(argc, argv, prefix, builtin_help_options,
 			builtin_help_usage, 0);
@@ -428,7 +431,8 @@ int cmd_help(int argc, const char **argv, const char *prefix)
 
 	if (show_all) {
 		printf("usage: %s\n\n", git_usage_string);
-		list_commands("git commands", &main_cmds, &other_cmds);
+		list_commands("git commands", &main_cmds, &extra_cmds,
+			      &other_cmds);
 		printf("%s\n", git_more_info_string);
 		return 0;
 	}

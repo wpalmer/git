@@ -191,6 +191,25 @@ static void list_commands_in_dir(struct cmdnames *cmds,
 	strbuf_release(&buf);
 }
 
+void list_commands_in_path(struct cmdnames *cmds,
+			   const char *paths,
+			   const char *prefix)
+{
+	char *buf, *path, *colon;
+	path = buf = xstrdup(paths);
+	while (1) {
+		if ((colon = strchr(path, PATH_SEP)))
+			*colon = 0;
+
+		list_commands_in_dir(cmds, path, prefix);
+
+		if (!colon)
+			break;
+		path = colon + 1;
+	}
+	free(buf);
+}
+
 void load_builtin_command_list(struct cmdnames *builtin_cmds)
 {
 	int i;
@@ -204,6 +223,7 @@ void load_builtin_command_list(struct cmdnames *builtin_cmds)
 
 void load_command_list(const char *prefix,
 		struct cmdnames *main_cmds,
+		struct cmdnames *extra_cmds,
 		struct cmdnames *other_cmds)
 {
 	const char *env_path = getenv("PATH");
@@ -216,36 +236,41 @@ void load_command_list(const char *prefix,
 		uniq(main_cmds);
 	}
 
-	if (env_path) {
-		char *paths, *path, *colon;
-		path = paths = xstrdup(env_path);
-		while (1) {
-			if ((colon = strchr(path, PATH_SEP)))
-				*colon = 0;
-			if (!exec_path || strcmp(path, exec_path))
-				list_commands_in_dir(other_cmds, path, prefix);
+	if (git_extra_path.len) {
+		list_commands_in_path(extra_cmds, git_extra_path.buf, prefix);
 
-			if (!colon)
-				break;
-			path = colon + 1;
-		}
-		free(paths);
+		qsort(extra_cmds->names, extra_cmds->cnt,
+		      sizeof(*extra_cmds->names), cmdname_compare);
+		uniq(extra_cmds);
+	}
+
+	if (env_path) {
+		list_commands_in_path(other_cmds, env_path, prefix);
 
 		qsort(other_cmds->names, other_cmds->cnt,
 		      sizeof(*other_cmds->names), cmdname_compare);
 		uniq(other_cmds);
 	}
-	exclude_cmds(other_cmds, main_cmds);
+
+	exclude_cmds(extra_cmds, main_cmds);
+
+	if (other_cmds != extra_cmds) {
+		exclude_cmds(other_cmds, main_cmds);
+		exclude_cmds(other_cmds, extra_cmds);
+	}
 }
 
 void list_commands(const char *title, struct cmdnames *main_cmds,
-		   struct cmdnames *other_cmds)
+		   struct cmdnames *extra_cmds, struct cmdnames *other_cmds)
 {
 	int i, longest = 0;
 
 	for (i = 0; i < main_cmds->cnt; i++)
 		if (longest < main_cmds->names[i]->len)
 			longest = main_cmds->names[i]->len;
+	for (i = 0; i < extra_cmds->cnt; i++)
+		if (longest < extra_cmds->names[i]->len)
+			longest = extra_cmds->names[i]->len;
 	for (i = 0; i < other_cmds->cnt; i++)
 		if (longest < other_cmds->names[i]->len)
 			longest = other_cmds->names[i]->len;
@@ -257,6 +282,15 @@ void list_commands(const char *title, struct cmdnames *main_cmds,
 		mput_char('-', strlen(title) + strlen(exec_path));
 		putchar('\n');
 		pretty_print_string_list(main_cmds, longest);
+		putchar('\n');
+	}
+
+	if (extra_cmds->cnt) {
+		printf("available %s from core.extrapath\n", title);
+		printf("------------------------------");
+		mput_char('-', strlen(title));
+		putchar('\n');
+		pretty_print_string_list(extra_cmds, longest);
 		putchar('\n');
 	}
 
@@ -325,18 +359,20 @@ static const char bad_interpreter_advice[] =
 const char *help_unknown_cmd(const char *cmd)
 {
 	int i, n, best_similarity = 0;
-	struct cmdnames main_cmds, other_cmds;
+	struct cmdnames main_cmds, extra_cmds, other_cmds;
 
 	memset(&main_cmds, 0, sizeof(main_cmds));
+	memset(&extra_cmds, 0, sizeof(extra_cmds));
 	memset(&other_cmds, 0, sizeof(other_cmds));
 	memset(&aliases, 0, sizeof(aliases));
 
 	git_config(git_unknown_cmd_config, NULL);
 
-	load_command_list("git-", &main_cmds, &other_cmds);
+	load_command_list("git-", &main_cmds, &extra_cmds, &other_cmds);
 	load_builtin_command_list(&main_cmds);
 
 	add_cmd_list(&main_cmds, &aliases);
+	add_cmd_list(&main_cmds, &extra_cmds);
 	add_cmd_list(&main_cmds, &other_cmds);
 	qsort(main_cmds.names, main_cmds.cnt,
 	      sizeof(main_cmds.names), cmdname_compare);
